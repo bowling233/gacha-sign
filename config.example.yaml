@@ -1,0 +1,19 @@
+# 多游戏社区签到配置
+# 复制为 config.yaml 填写。运行后自动生成 credentials.json 存储凭据。
+# 两个文件都含敏感信息，请勿提交（.gitignore 已忽略）。
+
+debug: false
+
+accounts:
+  - name: "米游社主号"
+    platform: mihoyo
+    cookie: ""             # APP 抓包获取（含 cookie_token_v2 等 v2 字段）
+
+  - name: "鸣潮主号"
+    platform: kuro
+    token: ""              # APP 抓包获取（JWT，有效期约30天）
+
+  - name: "异环主号"
+    platform: tajiduo
+    phone: ""              # 手机号
+    password: ""           # 密码（程序自动登录并管理 token）

@@ -1,0 +1,14 @@
+# 敏感文件（含账号密码 / token / cookie，切勿提交）
+config.yaml
+credentials.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.mypy_cache/
+.ruff_cache/
+logs/
+
+# uv lockfile should be committed for reproducible installs
