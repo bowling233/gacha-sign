@@ -1,0 +1,6 @@
+name: gacha_sign
+display_name: gacha-sign 二游签到
+desc: 二游社区每日签到（米游社/库街区/塔吉多），支持定时自动签到和手动命令
+version: v0.1.0
+author: bowling222
+repo: "https://github.com/bowling233/gacha-sign"

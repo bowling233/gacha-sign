@@ -13,7 +13,7 @@
 ```bash
 uv sync
 cp config.example.yaml config.yaml   # 填写凭证
-uv run python main.py run             # 签到
+uv run python cli.py run             # 签到
 ```
 
 在 `config.yaml` 中设 `debug: true` 可输出详细日志到 `logs/`。
@@ -128,8 +128,8 @@ mitmdump -nr /tmp/capture.flows -s /tmp/extract.py --set flow_detail=0 2>&1 | gr
 ## 命令
 
 ```
-uv run python main.py run [--platform mihoyo|kuro|tajiduo] [--account NAME]
-uv run python main.py check
+uv run python cli.py run [--platform mihoyo|kuro|tajiduo] [--account NAME]
+uv run python cli.py check
 ```
 
 ## 致谢

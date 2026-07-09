@@ -1,0 +1,32 @@
+{
+  "accounts": {
+    "description": "账号列表（JSON 数组）",
+    "type": "text",
+    "default": "[]",
+    "hint": "示例：[{\"name\":\"异环\",\"platform\":\"tajiduo\",\"phone\":\"手机号\",\"password\":\"密码\"},{\"name\":\"绝区零\",\"platform\":\"mihoyo\",\"cookie\":\"APP抓包cookie\"},{\"name\":\"鸣潮\",\"platform\":\"kuro\",\"token\":\"APP抓包token\"}]"
+  },
+  "auto_sign_enabled": {
+    "description": "启用定时自动签到",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后每天定时自动执行签到"
+  },
+  "auto_sign_hour": {
+    "description": "定时签到-小时",
+    "type": "int",
+    "default": 9,
+    "hint": "0-23"
+  },
+  "auto_sign_minute": {
+    "description": "定时签到-分钟",
+    "type": "int",
+    "default": 0,
+    "hint": "0-59"
+  },
+  "notify_session": {
+    "description": "签到结果推送目标（留空不推送）",
+    "type": "string",
+    "default": "",
+    "hint": "JSON格式的会话信息，如 {\"platform_name\":\"aiocqhttp\",\"message_type\":\"private\",\"session_id\":\"123456\"}。通常从 /gacha-sign run 的触发消息中获取。"
+  }
+}
