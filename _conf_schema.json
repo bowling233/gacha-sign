@@ -24,9 +24,9 @@
     "hint": "0-59"
   },
   "notify_session": {
-    "description": "签到结果推送目标（留空不推送）",
+    "description": "签到结果推送目标 unified_msg_origin（留空不推送）",
     "type": "string",
     "default": "",
-    "hint": "JSON格式的会话信息，如 {\"platform_name\":\"aiocqhttp\",\"message_type\":\"private\",\"session_id\":\"123456\"}。通常从 /gacha-sign run 的触发消息中获取。"
+    "hint": "填写 unified_msg_origin，如 astrbot:GroupMessage:xxx；也可在目标会话中使用 /gacha-sign bind 自动绑定。"
   }
 }

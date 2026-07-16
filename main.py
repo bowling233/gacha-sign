@@ -5,6 +5,8 @@ CLI 入口在 cli.py。
 
 命令：
   /gacha-sign          显示子命令列表
+  /gacha-sign help     显示帮助
+  /gacha-sign bind     将签到结果推送目标绑定到当前会话
   /gacha-sign run      手动执行签到
   /gacha-sign check    校验凭证有效性
   /gacha-sign status   查看上次签到结果
@@ -121,12 +123,11 @@ class GachaSignPlugin(Star):
         """定时签到任务：执行签到并推送结果。"""
         logger.info("[gacha_sign] 定时签到开始")
         await self._do_signin()
-        notify_session = self.config.get("notify_session", "")
-        if notify_session:
+        notify_umo = self.config.get("notify_session", "").strip()
+        if notify_umo:
             msg = self._format_results()
             try:
-                umo = json.loads(notify_session)
-                await self.context.send_message(umo, MessageChain().message(msg))
+                await self.context.send_message(notify_umo, MessageChain().message(msg))
             except Exception as e:
                 logger.warning(f"[gacha_sign] 推送失败: {e}")
 
@@ -200,6 +201,27 @@ class GachaSignPlugin(Star):
     def gacha_sign_group(self):
         """gacha-sign 二游签到"""
         pass
+
+    @gacha_sign_group.command("help")
+    async def cmd_help(self, event: AstrMessageEvent):
+        """显示帮助"""
+        yield event.plain_result(
+            "gacha-sign 二游签到\n"
+            "/gacha-sign help - 显示本帮助\n"
+            "/gacha-sign run - 手动执行签到\n"
+            "/gacha-sign check - 校验凭证有效性\n"
+            "/gacha-sign status - 查看上次签到结果\n"
+            "/gacha-sign bind - 将定时签到结果推送到当前会话（管理员）"
+        )
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @gacha_sign_group.command("bind")
+    async def cmd_bind(self, event: AstrMessageEvent):
+        """将签到结果推送目标绑定到当前会话"""
+        umo = event.unified_msg_origin
+        self.config["notify_session"] = umo
+        self.config.save_config()
+        yield event.plain_result(f"已将签到结果推送目标绑定到当前会话：\n{umo}")
 
     @gacha_sign_group.command("run")
     async def cmd_run(self, event: AstrMessageEvent):

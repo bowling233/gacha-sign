@@ -127,6 +127,21 @@ mitmdump -nr /tmp/capture.flows -s /tmp/extract.py --set flow_detail=0 2>&1 | gr
 
 ## 命令
 
+AstrBot 插件命令：
+
+```
+/gacha-sign help     # 显示帮助
+/gacha-sign bind     # 将定时签到结果推送目标绑定到当前会话（管理员）
+/gacha-sign run      # 手动执行签到
+/gacha-sign check    # 校验凭证有效性
+/gacha-sign status   # 查看上次签到结果
+```
+
+推送目标也可在插件配置中填写 `unified_msg_origin`，例如
+`astrbot:GroupMessage:xxx`；留空则不推送。
+
+CLI 命令：
+
 ```
 uv run python cli.py run [--platform mihoyo|kuro|tajiduo] [--account NAME]
 uv run python cli.py check
