@@ -153,37 +153,57 @@ adb shell settings put global http_proxy :0
 
 ### 米游社（绝区零 / 原神）
 
-- 测试版本：v2.109.0（API 参考 MihoyoBBSTools，未实机抓包）
-- 凭证：cookie（含 `cookie_token_v2` 等 v2 字段）
-- 社区签到/任务还需 `stoken`（当前 cookie 可能不包含，需完整抓包获取）
+- 测试版本：v2.112.0（真机 Redmi K40s 抓包 + MihoyoBBSTools 参考）
+- 凭证：cookie（含 `cookie_token_v2` 等 v2 字段）+ stoken（社区接口必需）
+- stoken 获取：密码登录 → `checkRiskVerified` 返回 token(type=1) → `exchange` 换取 stoken(type=2)；
+  或从登录后的 BBS 请求 cookie 中提取 `stoken` 字段
 
-游戏签到不需要 DS 签名；社区接口需要 **DS（Dynamic Secret）** 签名
-（`md5(salt + timestamp + random + body + query)`，salt 来自 MihoyoBBSTools）。
+所有接口需要 **DS（Dynamic Secret）** 签名。游戏签到用简单 DS（`md5(salt&ts&rand)`，
+salt=`47f15f1b66bee46b816115d8e8e6ebb6`）；社区签到用 DS2（`md5(salt&ts&rand&body&query)`，
+salt=`t0qEgfub6cvueAPgR5m9aQWWVciEer7v`）。
 
 #### game_checkin（游戏签到）
 
-| 游戏 | game_biz | act_id | API |
-| --- | --- | --- | --- |
-| 绝区零 | `nap_cn` | `e202406242138391` | `act-nap-api.mihoyo.com/event/luna/zzz/{info,sign}` |
-| 原神 | `hk4e_cn` | `e202311201442471` | `api-takumi.mihoyo.com/event/luna/{info,sign}` |
+| 游戏 | game_biz | act_id | API 路径 | signgame |
+| --- | --- | --- | --- | --- |
+| 绝区零 | `nap_cn` | `e202406242138391` | `act-nap-api.mihoyo.com/event/luna/zzz/{info,sign}` | `zzz` |
+| 原神 | `hk4e_cn` | `e202311201442471` | `api-takumi.mihoyo.com/event/luna/hk4e/{info,sign}` | `hk4e` |
+
+> 原神签到必须带 `x-rpc-signgame: hk4e` 头和 DS 签名，否则返回 `retcode=-500012`。
 
 #### bbs_checkin（社区签到）
 
 | 接口 | 参数 | 用途 |
 | --- | --- | --- |
 | `GET /apihub/wapi/getUserMissionsState` | `?point_sn=myb` | 任务状态（含签到 task_id=58） |
-| `POST /apihub/app/api/signIn` | `{"gids":"forumId"}` + DS2 | **执行签到**（需 stoken） |
+| `POST /apihub/app/api/signIn` | `{"gids":"8"}` + DS2 | **执行签到** → 30 米游币（需 stoken） |
+
+> `gids` 是论坛的 `id` 字段（绝区零=8, 原神=2），**不是** `forumId`（57/26）。
+> 每日只需签到一次即得全部积分，多次签到积分返回 0。
 
 #### bbs_tasks（社区每日任务）
 
-| 接口 | 参数 | 用途 | 积分 |
-| --- | --- | --- | --- |
-| `GET /post/api/getPostFull` | `?post_id=X` | **浏览帖子**（×3, task_id=59） | — |
-| `POST /apihub/sapi/upvotePost` | `{"post_id":X}` | **点赞**（×5, task_id=60） | — |
-| `GET /apihub/api/getShareConf` | `?entity_id=X&entity_type=1` | **分享**（×1, task_id=61） | — |
-| `GET /post/api/getForumPostList` | `?forum_id=X` | 帖子列表（获取 post_id） | — |
+| 接口 | 参数 | 用途 |
+| --- | --- | --- |
+| `GET /post/api/getPostFull` | `?post_id=X` | **浏览帖子**（×3, task_id=59） |
+| `POST /apihub/sapi/upvotePost` | `{"post_id":X}` | **点赞**（×5, task_id=60） |
+| `GET /apihub/api/getShareConf` | `?entity_id=X&entity_type=1` | **分享**（×1, task_id=61） |
+| `GET /post/api/getForumPostList` | `?forum_id=57` | 帖子列表（用 forumId，获取 post_id） |
 
 > 社区接口 Base URL：`https://bbs-api.miyoushe.com`
+> 浏览/点赞/分享用 stoken cookie + 简单 DS；任务状态查询用完整 cookie 无 DS。
+
+#### 密码登录流程（参考，未实现自动化）
+
+```
+POST passport-api.mihoyo.com/account/ma-cn-passport/app/loginByPassword
+  body: {account: "<RSA加密>", password: "<RSA加密>"}  → retcode=-3235 (需验证)
+POST .../verifier/createMobileCaptchaByActionTicket  → 发送短信
+POST .../verifier/verifyActionTicketPartly            → {mobile_captcha: "验证码"}
+POST .../app/checkRiskVerified                        → token(type=1)
+POST .../ma-cn-session/app/exchange                   → stoken(type=2)
+POST bbs-api.miyoushe.com/user/api/login              → BBS 登录完成
+```
 
 ### 森空岛（明日方舟/终末地）
 
