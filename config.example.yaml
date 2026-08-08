@@ -17,3 +17,8 @@ accounts:
     platform: tajiduo
     phone: ""              # 手机号
     password: ""           # 密码（程序自动登录并管理 token）
+
+  - name: "森空岛主号"
+    platform: skland
+    phone: ""              # 手机号（鹰角通行证）
+    password: ""           # 密码（程序自动登录并管理 token）

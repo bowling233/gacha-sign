@@ -62,12 +62,10 @@ class RunSummary:
 def run(
     config: AppConfig,
     *,
-    platform_filter: str | None = None,
     account_filter: str | None = None,
 ) -> RunSummary:
     """执行所有（或筛选后的）账号签到。
 
-    :param platform_filter: 仅执行该平台（如 "kuro"）。
     :param account_filter:  仅执行该名称的账号。
     """
     summary = RunSummary()
@@ -78,8 +76,6 @@ def run(
     with HttpClient() as http:
         for acc in accounts:
             label = f"{acc.platform}/{acc.name}"
-            if platform_filter and acc.platform != platform_filter.lower():
-                continue
             if account_filter and acc.name != account_filter:
                 continue
 

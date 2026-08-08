@@ -3,7 +3,6 @@
 
 用法：
     uv run python main.py run                           # 执行所有账号签到
-    uv run python main.py run --platform kuro            # 仅执行库街区账号
     uv run python main.py run --account "鸣潮主号"        # 仅执行指定账号
     uv run python main.py check                          # 校验所有账号凭证是否有效
 """
@@ -42,7 +41,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     summary = run_all(
         config,
-        platform_filter=args.platform,
         account_filter=args.account,
     )
     notify_send(summary, config.defaults.get("push"))
@@ -62,8 +60,6 @@ def cmd_check(args: argparse.Namespace) -> int:
     with HttpClient() as http:
         for acc in config.accounts:
             label = f"{acc.platform}/{acc.name}"
-            if args.platform and acc.platform != args.platform.lower():
-                continue
             cls = get_platform_cls(acc.platform)
             if cls is None:
                 print(f"  ✗ {label} 不支持的平台")
@@ -102,12 +98,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_run = sub.add_parser("run", help="执行签到")
-    p_run.add_argument("--platform", default=None, help="仅执行该平台 (mihoyo/kuro/tajiduo)")
     p_run.add_argument("--account", default=None, help="仅执行该名称的账号")
     p_run.set_defaults(func=cmd_run)
 
     p_check = sub.add_parser("check", help="校验所有账号凭证")
-    p_check.add_argument("--platform", default=None, help="仅校验该平台")
     p_check.set_defaults(func=cmd_check)
 
     return parser

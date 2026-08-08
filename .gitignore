@@ -11,4 +11,7 @@ __pycache__/
 .ruff_cache/
 logs/
 
+# 下载的 APK（体积大，不提交）
+apks/
+
 # uv lockfile should be committed for reproducible installs

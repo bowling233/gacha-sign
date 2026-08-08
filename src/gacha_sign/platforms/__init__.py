@@ -32,6 +32,12 @@ def _build_registry() -> dict[str, type[PlatformBase]]:
         registry["tajiduo"] = TajiduoPlatform
     except Exception:  # noqa: BLE001
         pass
+    try:
+        from .skland import SklandPlatform
+
+        registry["skland"] = SklandPlatform
+    except Exception:  # noqa: BLE001
+        pass
     return registry
 
 
