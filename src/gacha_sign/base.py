@@ -151,7 +151,11 @@ class Account:
 
 
 class PlatformBase(ABC):
-    """社区 APP 游戏签到的统一接口。"""
+    """社区 APP 签到的统一接口。
+
+    子类至少实现 ``verify_credential`` 和 ``game_signin``。
+    ``bbs_checkin`` / ``bbs_tasks`` 为可选，默认跳过。
+    """
 
     name: str = ""
     display_name: str = ""  #: 平台中文名，子类覆盖（如「米游社」「森空岛」）
@@ -169,23 +173,50 @@ class PlatformBase(ABC):
     def game_signin(self) -> list[CheckinResult]:
         """游戏签到（领游戏内奖励），返回每个游戏/角色的结果列表。"""
 
+    def bbs_checkin(self) -> list[CheckinResult]:
+        """社区每日签到（领社区积分），子类按需覆盖。"""
+        return [self._skipped("bbs_checkin", "社区签到", "该平台暂不支持社区签到")]
+
+    def bbs_tasks(self) -> list[CheckinResult]:
+        """社区每日任务（浏览/点赞/分享等，领社区积分），子类按需覆盖。"""
+        return [self._skipped("bbs_tasks", "社区任务", "该平台暂不支持社区任务")]
+
+    #: ``run_all`` 依次执行的 (方法名, 中文标签) 列表
+    _ACTIONS: list[tuple[str, str]] = [
+        ("game_signin", "游戏签到"),
+        ("bbs_checkin", "社区签到"),
+        ("bbs_tasks", "社区任务"),
+    ]
+
     def run_all(self) -> list[CheckinResult]:
-        """执行游戏签到，返回结果列表。"""
-        try:
-            return self.game_signin()
-        except AuthExpiredError as e:
-            return [CheckinResult(
-                platform=self.name, account=self.account.name, display_platform=self.display_name,
-                action="game_signin", status=CheckinStatus.AUTH_EXPIRED, message=str(e),
-            )]
-        except CaptchaNeededError as e:
-            return [CheckinResult(
-                platform=self.name, account=self.account.name, display_platform=self.display_name,
-                action="game_signin", status=CheckinStatus.CAPTCHA_NEEDED, message=str(e),
-            )]
-        except Exception as e:  # noqa: BLE001
-            logger.exception("%s/%s 游戏签到异常", self.name, self.account.name)
-            return [CheckinResult(
-                platform=self.name, account=self.account.name, display_platform=self.display_name,
-                action="game_signin", status=CheckinStatus.FAILED, message=repr(e),
-            )]
+        """依次执行所有签到动作，每个动作独立 try/except。token 失效则跳过后续。"""
+        results: list[CheckinResult] = []
+        for method_name, label in self._ACTIONS:
+            try:
+                results.extend(getattr(self, method_name)())
+            except AuthExpiredError as e:
+                results.append(CheckinResult(
+                    platform=self.name, account=self.account.name, display_platform=self.display_name,
+                    action=method_name, status=CheckinStatus.AUTH_EXPIRED, message=str(e), game=label,
+                ))
+                break  # token 失效，后续动作也会失败
+            except CaptchaNeededError as e:
+                results.append(CheckinResult(
+                    platform=self.name, account=self.account.name, display_platform=self.display_name,
+                    action=method_name, status=CheckinStatus.CAPTCHA_NEEDED, message=str(e), game=label,
+                ))
+            except Exception as e:  # noqa: BLE001
+                logger.exception("%s/%s %s异常", self.name, self.account.name, label)
+                results.append(CheckinResult(
+                    platform=self.name, account=self.account.name, display_platform=self.display_name,
+                    action=method_name, status=CheckinStatus.FAILED, message=repr(e), game=label,
+                ))
+        return results
+
+    def _skipped(self, action: str, game: str, message: str = "") -> CheckinResult:
+        """构造跳过结果。"""
+        return CheckinResult(
+            platform=self.name, account=self.account.name, action=action,
+            status=CheckinStatus.SKIPPED, message=message, game=game,
+            display_platform=self.display_name,
+        )

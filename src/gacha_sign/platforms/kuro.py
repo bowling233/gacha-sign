@@ -41,6 +41,17 @@ URL_GAME_SIGN_INIT = f"{API_BASE}/encourage/signIn/initSignInV2"
 URL_GAME_REPLENISH = f"{API_BASE}/encourage/signIn/repleSigInV2"
 URL_GAME_SIGN_RECORD = f"{API_BASE}/encourage/signIn/queryRecordV2"
 
+# 社区签到 / 社区任务
+URL_BBS_SIGNIN = f"{API_BASE}/user/signIn"
+URL_BBS_SIGNIN_INFO = f"{API_BASE}/user/signIn/info"
+URL_FORUM_LIST = f"{API_BASE}/forum/list"
+URL_POST_DETAIL = f"{API_BASE}/forum/getPostDetail"
+URL_FORUM_LIKE = f"{API_BASE}/forum/like"
+URL_SHARE_TASK = f"{API_BASE}/encourage/level/shareTask"
+URL_TASK_PROCESS = f"{API_BASE}/encourage/level/getTaskProcess"
+
+BBS_GAME_ID = "2"  # 社区签到的 gameId
+
 WEBVIEW_UA = (
     "Mozilla/5.0 (Linux; Android 12; V2314A Build/W528JS; wv) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 "
@@ -66,6 +77,15 @@ class KuroPlatform(PlatformBase):
         # 运行时凭据（credentials.json）
         self.role_id: str = self.account.cred_get("role_id", "") or ""
         self.user_id: str = self.account.cred_get("user_id", "") or ""
+        self.dev_code: str = self.account.cred_get("dev_code", "") or ""
+
+    def _ensure_dev_code(self) -> str:
+        """生成或复用设备指纹（32位大写 hex），持久化到 credentials.json。"""
+        if not self.dev_code:
+            import uuid
+            self.dev_code = uuid.uuid4().hex.upper()
+            self.account.cred_set("dev_code", self.dev_code)
+        return self.dev_code
 
     # ---- header ----
     def _okhttp_headers(self) -> dict[str, str]:
@@ -74,7 +94,7 @@ class KuroPlatform(PlatformBase):
             "source": "android",
             "version": "3.1.3",
             "token": self.token,
-            "Cookie": f"user_token={self.token}",
+            "devCode": self._ensure_dev_code(),
             "Content-Type": "application/x-www-form-urlencoded",
             "user-agent": "okhttp/3.11.0",
         }
@@ -177,6 +197,112 @@ class KuroPlatform(PlatformBase):
                     self._http.post_form(URL_GAME_REPLENISH, data=data, headers=headers)
         except Exception:  # noqa: BLE001
             pass
+
+    # ---- 社区签到 ----
+    def bbs_checkin(self) -> list[CheckinResult]:
+        """社区每日签到（gameId=2），无需 GeeTest。"""
+        headers = self._okhttp_headers()
+        # 查询签到状态
+        info = self._http.post_form(URL_BBS_SIGNIN_INFO, data={"gameId": BBS_GAME_ID}, headers=headers)
+        if info.code == CODE_SUCCESS and isinstance(info.data, dict) and info.data.get("hasSignIn"):
+            return [self._ok("bbs_checkin", "社区今日已签到", game="社区签到", status=CheckinStatus.ALREADY_SIGNED)]
+        # 执行签到
+        resp = self._http.post_form(URL_BBS_SIGNIN, data={"gameId": BBS_GAME_ID}, headers=headers)
+        if resp.code == CODE_SUCCESS:
+            gold = 0
+            if isinstance(resp.data, dict):
+                for g in resp.data.get("gainVoList", []):
+                    if g.get("gainTyp") == 2:
+                        gold = g.get("gainValue", 0)
+            return [self._ok("bbs_checkin", f"社区签到成功 +{gold}金币", str(gold) if gold else "", game="社区签到")]
+        if resp.code == CODE_LOGIN_EXPIRED:
+            raise AuthExpiredError("社区签到失败：token 已过期")
+        return [self._fail("bbs_checkin", f"社区签到失败 code={resp.code} {resp.message}", game="社区签到")]
+
+    # ---- 社区每日任务 ----
+    def bbs_tasks(self) -> list[CheckinResult]:
+        """社区每日任务：浏览3篇帖子 + 点赞5次 + 分享1次。"""
+        headers = self._okhttp_headers()
+        posts = self._get_post_list(headers)
+        if not posts:
+            return [self._fail("bbs_tasks", "获取帖子列表失败，跳过社区任务", game="社区任务")]
+
+        msgs: list[str] = []
+
+        # 浏览 3 篇帖子
+        viewed = 0
+        for p in posts[:3]:
+            r = self._http.post_form(
+                URL_POST_DETAIL,
+                data={"isOnlyPublisher": "0", "postId": p["postId"], "showOrderType": "2"},
+                headers=headers,
+            )
+            if r.code == CODE_SUCCESS:
+                viewed += 1
+        msgs.append(f"浏览{viewed}/3")
+
+        # 点赞 5 次
+        liked = 0
+        for p in posts[:5]:
+            r = self._http.post_form(
+                URL_FORUM_LIKE,
+                data={
+                    "forumId": p.get("forumId", "9"),
+                    "gameId": WUWA_GAME_ID,
+                    "likeType": "1",
+                    "operateType": "1",
+                    "postCommentId": "0",
+                    "postCommentReplyId": "0",
+                    "postId": p["postId"],
+                    "postType": str(p.get("postType", "1")),
+                    "toUserId": str(p.get("userId", "")),
+                },
+                headers=headers,
+            )
+            if r.code == CODE_SUCCESS:
+                liked += 1
+        msgs.append(f"点赞{liked}/5")
+
+        # 分享 1 次
+        shared = 0
+        if posts:
+            r = self._http.post_form(
+                URL_SHARE_TASK,
+                data={"gameId": WUWA_GAME_ID, "postId": posts[0]["postId"]},
+                headers=headers,
+            )
+            if r.code == CODE_SUCCESS:
+                shared = 1
+        msgs.append(f"分享{shared}/1")
+
+        all_done = viewed >= 3 and liked >= 5 and shared >= 1
+        status = CheckinStatus.SUCCESS if all_done else CheckinStatus.FAILED
+        return [CheckinResult(self.name, self.account.name, "bbs_tasks", status, "；".join(msgs), "", "社区任务", self.display_name)]
+
+    def _get_post_list(self, headers: dict) -> list[dict]:
+        """获取帖子列表（用于社区任务）。"""
+        resp = self._http.post_form(
+            URL_FORUM_LIST,
+            data={
+                "forumId": "9", "gameId": WUWA_GAME_ID,
+                "pageIndex": "1", "pageSize": "20",
+                "searchType": "3", "timeType": "0", "topicId": "0",
+            },
+            headers=headers,
+        )
+        if resp.code == CODE_SUCCESS and isinstance(resp.data, dict):
+            posts = resp.data.get("postList", []) + resp.data.get("topList", [])
+            return [
+                {
+                    "postId": str(p.get("postId", "")),
+                    "userId": str(p.get("userId", "")),
+                    "forumId": str(p.get("gameForumId", "9")),
+                    "postType": str(p.get("postType", "1")),
+                }
+                for p in posts
+                if isinstance(p, dict) and p.get("postId")
+            ]
+        return []
 
     # ---- 结果构造辅助 ----
     def _ok(self, action: str, message: str, reward: str = "", status: CheckinStatus = CheckinStatus.SUCCESS, game: str = "鸣潮") -> CheckinResult:

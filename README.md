@@ -21,24 +21,13 @@ uv run python cli.py run             # 签到
 
 ## 凭证配置
 
-### 塔吉多（异环）— 全自动
+### 塔吉多（异环）/ 森空岛（明日方舟/终末地）— 全自动
 
 在 `config.yaml` 填写手机号和密码即可，程序自动登录并管理 token：
 
 ```yaml
 - name: "异环主号"
   platform: tajiduo
-  phone: "手机号"
-  password: "密码"
-```
-
-### 森空岛（明日方舟/终末地）— 全自动
-
-同理，填写鹰角通行证手机号和密码即可，程序自动登录、生成设备指纹并签到：
-
-```yaml
-- name: "森空岛主号"
-  platform: skland
   phone: "手机号"
   password: "密码"
 ```

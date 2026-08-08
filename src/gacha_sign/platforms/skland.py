@@ -57,6 +57,19 @@ URL_BINDING_LIST = f"{SK_BASE}/api/v1/game/player/binding"
 URL_SIGN_ARKNIGHTS = f"{SK_BASE}/api/v1/game/attendance"
 URL_SIGN_ENDFIELD = f"{SK_BASE}/web/v1/game/endfield/attendance"
 
+# 社区签到 / 社区任务
+URL_BBS_CHECKIN = f"{SK_BASE}/api/v1/score/checkin"
+URL_BBS_ISCHECKIN = f"{SK_BASE}/api/v1/score/ischeckin"
+URL_BBS_SHARE = f"{SK_BASE}/api/v1/score/share"
+URL_BBS_LIKE = f"{SK_BASE}/api/v1/action/item/like"
+URL_BBS_ITEM = f"{SK_BASE}/api/v1/item"
+URL_BBS_FEED = f"{SK_BASE}/api/v1/rec/index"
+URL_BBS_TASKS = f"{SK_BASE}/api/v1/score/tasks"
+
+# 社区 gameId（终末地=3，明日方舟=1）
+ENDFIELD_GAME_ID = "3"
+ARKNIGHTS_GAME_ID = "1"
+
 # 数美（ShuMei）设备指纹
 SM_ORG = "UWXspnCCJN4sfYlNfqps"
 SM_DEVICE_URL = "https://fp-it.portal101.cn/deviceprofile/v4"
@@ -391,9 +404,95 @@ class SklandPlatform(PlatformBase):
         return False, msg or str(data)[:120], ""
 
     # ------------------------------------------------------------------
+    # 社区签到（登岛检票）
+    # ------------------------------------------------------------------
+    def bbs_checkin(self) -> list[CheckinResult]:
+        self._ensure_cred()
+        # 先查询已检票状态
+        h0 = self._signed_headers(URL_BBS_ISCHECKIN, "GET")
+        checked_games: set[str] = set()
+        resp0 = self._http.get(URL_BBS_ISCHECKIN, headers=h0)
+        d0 = resp0.raw_json if isinstance(resp0.raw_json, dict) else {}
+        if d0.get("code") == 0:
+            for g in d0.get("data", {}).get("list", []):
+                if g.get("checked"):
+                    checked_games.add(str(g.get("gameId")))
+
+        results: list[CheckinResult] = []
+        for gid, gname in [(ARKNIGHTS_GAME_ID, "明日方舟"), (ENDFIELD_GAME_ID, "终末地")]:
+            if gid in checked_games:
+                results.append(self._ok("bbs_checkin", f"{gname}今日已检票", game=f"社区签到/{gname}",
+                                        status=CheckinStatus.ALREADY_SIGNED))
+                continue
+            body = json.dumps({"gameId": int(gid)}, separators=(",", ":"))
+            h = self._signed_headers(URL_BBS_CHECKIN, "POST", body)
+            resp = self._http.post_json(URL_BBS_CHECKIN, json_body={"gameId": int(gid)}, headers=h)
+            data = resp.raw_json if isinstance(resp.raw_json, dict) else {}
+            if data.get("code") == 0:
+                results.append(self._ok("bbs_checkin", f"{gname}登岛检票成功", game=f"社区签到/{gname}"))
+            else:
+                results.append(self._ok("bbs_checkin", f"{gname}今日已检票", game=f"社区签到/{gname}",
+                                        status=CheckinStatus.ALREADY_SIGNED))
+        return results
+
+    # ------------------------------------------------------------------
+    # 社区任务（浏览/点赞/分享）
+    # ------------------------------------------------------------------
+    def bbs_tasks(self) -> list[CheckinResult]:
+        self._ensure_cred()
+        post_ids = self._get_feed_posts()
+        if not post_ids:
+            return [self._fail("bbs_tasks", "获取帖子列表失败", "社区任务")]
+
+        msgs: list[str] = []
+
+        # 浏览内容 ×5
+        viewed = 0
+        for pid in post_ids[:5]:
+            url = f"{URL_BBS_ITEM}?id={pid}&teenager=0"
+            h = self._signed_headers(url, "GET")
+            resp = self._http.get(url, headers=h)
+            if resp.code == 0:
+                viewed += 1
+        msgs.append(f"浏览{viewed}/5")
+
+        # 点赞 ×10
+        liked = 0
+        for pid in post_ids[:10]:
+            body = json.dumps({"itemId": str(pid)}, separators=(",", ":"))
+            h = self._signed_headers(URL_BBS_LIKE, "POST", body)
+            resp = self._http.post_json(URL_BBS_LIKE, json_body={"itemId": str(pid)}, headers=h)
+            if resp.code == 0:
+                liked += 1
+        msgs.append(f"点赞{liked}/10")
+
+        # 分享 ×1（每个游戏各分享一次）
+        shared = 0
+        for gid in [ENDFIELD_GAME_ID, ARKNIGHTS_GAME_ID]:
+            body = json.dumps({"gameId": int(gid)}, separators=(",", ":"))
+            h = self._signed_headers(URL_BBS_SHARE, "POST", body)
+            resp = self._http.post_json(URL_BBS_SHARE, json_body={"gameId": int(gid)}, headers=h)
+            if resp.code == 0:
+                shared += 1
+        msgs.append(f"分享{shared}/2")
+
+        return [self._ok("bbs_tasks", "；".join(msgs), game="社区任务")]
+
+    def _get_feed_posts(self) -> list[str]:
+        """获取推荐流帖子 ID 列表。"""
+        url = f"{URL_BBS_FEED}?gameId=0&cateId=0&sortType=1&pageToken=&pageSize=20"
+        h = self._signed_headers(url, "GET")
+        resp = self._http.get(url, headers=h)
+        data = resp.raw_json if isinstance(resp.raw_json, dict) else {}
+        if data.get("code") != 0:
+            return []
+        posts = data.get("data", {}).get("list", [])
+        return [str(p.get("item", {}).get("id", "")) for p in posts if p.get("item", {}).get("id")]
+
+    # ------------------------------------------------------------------
     # 结果辅助
     # ------------------------------------------------------------------
-    def _ok(self, action: str, message: str, reward: str = "", game: str = "") -> CheckinResult:
+    def _ok(self, action: str, message: str, reward: str = "", game: str = "", status: CheckinStatus = CheckinStatus.SUCCESS) -> CheckinResult:
         return CheckinResult(self.name, self.account.name, action, CheckinStatus.SUCCESS, message, reward, game, self.display_name)
 
     def _fail(self, action: str, message: str, game: str = "") -> CheckinResult:

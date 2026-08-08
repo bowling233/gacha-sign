@@ -58,6 +58,17 @@ URL_GAME_SIGNIN = f"{TAJIDUO_BASE}/apihub/awapi/sign"
 URL_GAME_SIGN_STATE = f"{TAJIDUO_BASE}/apihub/awapi/signin/state"
 URL_GAME_SIGN_REWARDS = f"{TAJIDUO_BASE}/apihub/awapi/sign/rewards"
 
+# 社区签到 / 社区任务
+URL_BBS_SIGNIN = f"{TAJIDUO_BASE}/apihub/api/signin"
+URL_BBS_SIGN_STATE = f"{TAJIDUO_BASE}/apihub/api/getSignState"
+URL_BBS_COIN_STATE = f"{TAJIDUO_BASE}/apihub/api/getUserCoinTaskState"
+URL_BBS_POST_LIST = f"{TAJIDUO_BASE}/bbs/api/getRecommendPostList"
+URL_BBS_POST_FULL = f"{TAJIDUO_BASE}/bbs/api/getPostFull"
+URL_BBS_LIKE = f"{TAJIDUO_BASE}/bbs/api/post/like"
+URL_BBS_SHARE = f"{TAJIDUO_BASE}/bbs/api/post/getShareData"
+
+COMMUNITY_ID = "2"  # 异环社区
+
 # 登录请求基础头
 LAOHU_HEADERS = {"platform": "android", "Content-Type": "application/x-www-form-urlencoded"}
 
@@ -349,6 +360,75 @@ class TajiduoPlatform(PlatformBase):
         if not token or user_id is None:
             raise RuntimeError("密码登录返回缺少 token/userId")
         self._user_center_login(token, str(user_id))
+
+    # ---- 社区签到 ----
+    def bbs_checkin(self) -> list[CheckinResult]:
+        """社区每日签到（communityId=2 异环社区）。"""
+        headers = self._native_headers()
+        # 查询签到状态
+        state = self._http.get(URL_BBS_SIGN_STATE, headers=headers, params={"communityId": COMMUNITY_ID})
+        if self._is_ok(state):
+            data = state.raw_json.get("data") if isinstance(state.raw_json, dict) else None
+            if data is True:
+                return [self._ok("bbs_checkin", "社区今日已签到", game="社区签到", status=CheckinStatus.ALREADY_SIGNED)]
+        # 执行签到
+        resp = self._http.post_form(URL_BBS_SIGNIN, data={"communityId": COMMUNITY_ID}, headers=headers)
+        if self._is_ok(resp):
+            data = resp.raw_json.get("data") if isinstance(resp.raw_json, dict) else {}
+            coin = data.get("goldCoin", 0) if isinstance(data, dict) else 0
+            return [self._ok("bbs_checkin", f"社区签到成功 +{coin}金币", str(coin) if coin else "", game="社区签到")]
+        return [self._ok("bbs_checkin", "社区今日已签到", game="社区签到", status=CheckinStatus.ALREADY_SIGNED)]
+
+    # ---- 社区任务 ----
+    def bbs_tasks(self) -> list[CheckinResult]:
+        """社区每日任务：浏览帖子 + 点赞 + 分享。"""
+        headers = self._native_headers()
+        post_ids = self._get_bbs_post_list(headers)
+        if not post_ids:
+            return [self._fail("bbs_tasks", "获取帖子列表失败", "社区任务")]
+
+        msgs: list[str] = []
+
+        # 浏览帖子 ×3
+        viewed = 0
+        for pid in post_ids[:3]:
+            resp = self._http.get(URL_BBS_POST_FULL, headers=headers, params={"postId": pid})
+            if self._is_ok(resp):
+                viewed += 1
+        msgs.append(f"浏览{viewed}/3")
+
+        # 点赞 ×3
+        liked = 0
+        for pid in post_ids[:3]:
+            resp = self._http.post_form(URL_BBS_LIKE, data={"postId": pid}, headers=headers)
+            if self._is_ok(resp):
+                liked += 1
+        msgs.append(f"点赞{liked}/3")
+
+        # 分享 ×1
+        shared = 0
+        if post_ids:
+            resp = self._http.get(URL_BBS_SHARE, headers=headers, params={"postId": post_ids[0]})
+            if self._is_ok(resp):
+                shared = 1
+        msgs.append(f"分享{shared}/1")
+
+        return [self._ok("bbs_tasks", "；".join(msgs), game="社区任务")]
+
+    def _get_bbs_post_list(self, headers: dict) -> list[str]:
+        """获取推荐帖子 ID 列表。"""
+        resp = self._http.get(
+            URL_BBS_POST_LIST, headers=headers,
+            params={"communityId": COMMUNITY_ID, "count": "20", "page": "1"},
+        )
+        if not self._is_ok(resp) or not isinstance(resp.raw_json, dict):
+            return []
+        data = resp.raw_json.get("data", resp.raw_json)
+        if not isinstance(data, dict):
+            return []
+        posts = data.get("posts", [])
+        return [str(p.get("id", p.get("postId", ""))) for p in posts
+                if isinstance(p, dict) and (p.get("id") or p.get("postId"))]
 
     # ---- 结果构造辅助 ----
     def _ok(self, action: str, message: str, reward: str = "", status: CheckinStatus = CheckinStatus.SUCCESS, game: str = "异环") -> CheckinResult:
