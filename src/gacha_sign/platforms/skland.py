@@ -118,6 +118,7 @@ class SklandPlatform(PlatformBase):
     """森空岛签到（明日方舟 / 终末地）。"""
 
     name = "skland"
+    display_name = "森空岛"
 
     def __init__(self, account: Account, http: HttpClient, options=None):
         super().__init__(account, http, options)
@@ -316,37 +317,40 @@ class SklandPlatform(PlatformBase):
     # ------------------------------------------------------------------
     # 游戏签到
     # ------------------------------------------------------------------
-    def game_signin(self) -> CheckinResult:
+    def game_signin(self) -> list[CheckinResult]:
         self._ensure_cred()
         # 获取绑定角色列表
         h = self._signed_headers(URL_BINDING_LIST, "GET")
         resp = self._http.get(URL_BINDING_LIST, headers=h)
         data = resp.raw_json if isinstance(resp.raw_json, dict) else {}
         if data.get("code") != 0:
-            return self._fail("game_signin", f"获取绑定列表失败: {data.get('message')}")
+            return [self._fail("game_signin", f"获取绑定列表失败: {data.get('message')}", "")]
         bindings = data.get("data", {}).get("list", [])
         if not bindings:
-            return self._fail("game_signin", "未绑定任何游戏角色")
+            return [self._fail("game_signin", "未绑定任何游戏角色", "")]
 
-        msgs: list[str] = []
-        ok = False
+        results: list[CheckinResult] = []
         for item in bindings:
             app = item.get("appCode", "")
             if app == "arknights":
                 for b in item.get("bindingList", []):
-                    success, msg = self._sign_arknights(b)
-                    ok = ok or success
-                    msgs.append(f"[明日方舟]{b.get('nickName','')}: {msg}")
+                    success, msg, reward = self._sign_arknights(b)
+                    nick = b.get("nickName", "")
+                    game = f"明日方舟/{nick}" if nick else "明日方舟"
+                    results.append(self._result(success, msg, reward, game))
             elif app == "endfield":
                 for b in item.get("bindingList", []):
-                    for success, msg in self._sign_endfield(b):
-                        ok = ok or success
-                        msgs.append(f"[终末地]{b.get('nickName','')}: {msg}")
-        if ok:
-            return self._ok("game_signin", "；".join(msgs))
-        return self._fail("game_signin", "；".join(msgs))
+                    for success, msg, reward, nick in self._sign_endfield(b):
+                        game = f"终末地/{nick}" if nick else "终末地"
+                        results.append(self._result(success, msg, reward, game))
+        return results or [self._fail("game_signin", "无可签到的游戏", "")]
 
-    def _sign_arknights(self, binding: dict) -> tuple[bool, str]:
+    def _result(self, success: bool, msg: str, reward: str, game: str) -> CheckinResult:
+        if success:
+            return self._ok("game_signin", msg, reward, game=game)
+        return self._fail("game_signin", msg, game=game)
+
+    def _sign_arknights(self, binding: dict) -> tuple[bool, str, str]:
         body = json.dumps(
             {"gameId": binding.get("gameId"), "uid": binding.get("uid")},
             separators=(",", ":"),
@@ -359,8 +363,8 @@ class SklandPlatform(PlatformBase):
         )
         return self._parse_sign_resp(resp)
 
-    def _sign_endfield(self, binding: dict) -> list[tuple[bool, str]]:
-        results: list[tuple[bool, str]] = []
+    def _sign_endfield(self, binding: dict) -> list[tuple[bool, str, str, str]]:
+        results: list[tuple[bool, str, str, str]] = []
         roles = binding.get("roles", [])
         for role in roles:
             h = self._signed_headers(URL_SIGN_ENDFIELD, "POST", "")
@@ -369,11 +373,11 @@ class SklandPlatform(PlatformBase):
             h["referer"] = "https://game.skland.com/"
             h["origin"] = "https://game.skland.com/"
             resp = self._http.post_json(URL_SIGN_ENDFIELD, json_body=None, headers=h)
-            success, msg = self._parse_sign_resp(resp)
-            results.append((success, f"{role.get('nickname','')}: {msg}"))
-        return results or [(False, "无角色")]
+            success, msg, reward = self._parse_sign_resp(resp)
+            results.append((success, msg, reward, role.get("nickname", "")))
+        return results or [(False, "无角色", "", "")]
 
-    def _parse_sign_resp(self, resp: ApiResponse) -> tuple[bool, str]:
+    def _parse_sign_resp(self, resp: ApiResponse) -> tuple[bool, str, str]:
         data = resp.raw_json if isinstance(resp.raw_json, dict) else {}
         msg = data.get("message", "")
         if data.get("code") == 0:
@@ -381,16 +385,16 @@ class SklandPlatform(PlatformBase):
             names = "+".join(
                 f"{a.get('resource',{}).get('name','')}x{a.get('count',1)}" for a in awards
             )
-            return True, f"签到成功 {names}".strip()
+            return True, "签到成功", names
         if _ALREADY_SIGNED_RE.search(msg):
-            return True, "今日已签到"
-        return False, msg or str(data)[:120]
+            return True, "今日已签到", ""
+        return False, msg or str(data)[:120], ""
 
     # ------------------------------------------------------------------
     # 结果辅助
     # ------------------------------------------------------------------
-    def _ok(self, action: str, message: str, reward: str = "") -> CheckinResult:
-        return CheckinResult(self.name, self.account.name, action, CheckinStatus.SUCCESS, message, reward)
+    def _ok(self, action: str, message: str, reward: str = "", game: str = "") -> CheckinResult:
+        return CheckinResult(self.name, self.account.name, action, CheckinStatus.SUCCESS, message, reward, game, self.display_name)
 
-    def _fail(self, action: str, message: str) -> CheckinResult:
-        return CheckinResult(self.name, self.account.name, action, CheckinStatus.FAILED, message)
+    def _fail(self, action: str, message: str, game: str = "") -> CheckinResult:
+        return CheckinResult(self.name, self.account.name, action, CheckinStatus.FAILED, message, "", game, self.display_name)

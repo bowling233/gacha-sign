@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from .base import Account, CheckinResult, PlatformBase
+from .base import Account, CheckinResult, PlatformBase, format_results
 from .config import AppConfig
 from .credentials import CredentialStore
 from .http import HttpClient
@@ -46,16 +46,14 @@ class RunSummary:
         """生成人类可读的汇总文本。"""
         if not self.results and not self.skipped:
             return "没有需要执行的账号。"
-        lines = ["=== 签到结果汇总 ==="]
-        for r in self.results:
-            lines.append(f"  {r}")
+        lines = [format_results(self.results)] if self.results else []
         if self.skipped:
-            lines.append("=== 跳过的账号 ===")
+            lines.append("跳过：")
             for s in self.skipped:
                 lines.append(f"  - {s}")
         ok = self.success_count
         total = len(self._by_account())
-        lines.append(f"=== 成功 {ok}/{total} 个账号 ===")
+        lines.append(f"成功 {ok}/{total} 个账号")
         return "\n".join(lines)
 
 

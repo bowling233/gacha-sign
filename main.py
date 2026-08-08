@@ -14,10 +14,11 @@ CLI 入口在 cli.py。
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from typing import Any
+
+import yaml
 
 # 将 src/ 目录加入路径，使 gacha_sign 包可被导入。
 # AstrBot 安装插件时 clone 整个仓库到 data/plugins/gacha_sign/，
@@ -33,7 +34,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter, MessageChain
 from astrbot.api.star import Context, Star
 
-from gacha_sign.base import Account, CheckinResult, CheckinStatus, AuthExpiredError
+from gacha_sign.base import Account, CheckinResult, CheckinStatus, AuthExpiredError, format_results
 from gacha_sign.http import HttpClient
 from gacha_sign.platforms import get_platform_cls
 
@@ -133,13 +134,20 @@ class GachaSignPlugin(Star):
 
     # ---- 签到核心逻辑 ----
     def _build_accounts(self) -> tuple[list[Account], KVCredentialStore]:
-        """从插件配置构造 Account 列表 + 凭据存储。"""
-        raw = self.config.get("accounts", "[]")
+        """从插件配置构造 Account 列表 + 凭据存储。
+
+        accounts 配置接受 YAML 文本（推荐，易编辑）或已解析的列表。
+        内容就是 config.yaml 中 accounts 部分的数组元素。
+        """
+        raw = self.config.get("accounts", "")
         if isinstance(raw, str):
-            accounts_data = json.loads(raw)
+            raw = raw.strip()
+            accounts_data = yaml.safe_load(raw) if raw else []
         elif isinstance(raw, list):
             accounts_data = raw
         else:
+            accounts_data = []
+        if not isinstance(accounts_data, list):
             accounts_data = []
 
         cred_store = KVCredentialStore(self._cred_cache)
@@ -189,12 +197,7 @@ class GachaSignPlugin(Star):
         """格式化签到结果为可读文本。"""
         if not self._last_results:
             return "暂无签到结果。使用 /gacha-sign run 执行签到。"
-        lines = ["=== gacha-sign 签到结果 ==="]
-        for r in self._last_results:
-            lines.append(f"  {r}")
-        ok = sum(1 for r in self._last_results if r.status.is_ok)
-        lines.append(f"=== {ok}/{len(self._last_results)} 成功 ===")
-        return "\n".join(lines)
+        return format_results(self._last_results)
 
     # ---- 命令处理 ----
     @filter.command_group("gacha-sign")
@@ -237,27 +240,27 @@ class GachaSignPlugin(Star):
         if not accounts:
             yield event.plain_result("未配置任何账号。")
             return
-        lines = ["=== 凭证校验 ==="]
+        lines = []
         with HttpClient() as http:
             for acc in accounts:
                 label = f"{acc.platform}/{acc.name}"
                 cls = get_platform_cls(acc.platform)
                 if cls is None:
-                    lines.append(f"  ✗ {label} 不支持的平台")
+                    lines.append(f"  ❌ {label} 不支持的平台")
                     continue
                 platform = cls(acc, http, {})
                 try:
                     ok = platform.verify_credential()
                 except AuthExpiredError as e:
                     ok = False
-                    lines.append(f"  ✗ {label} 凭证失效: {e}")
+                    lines.append(f"  ❌ {label} 凭证失效: {e}")
                     continue
                 except Exception as e:
                     ok = False
-                    lines.append(f"  ✗ {label} 校验异常: {e}")
+                    lines.append(f"  ❌ {label} 校验异常: {e}")
                     continue
-                mark = "✓" if ok else "✗"
-                lines.append(f"  {mark} {label}")
+                emoji = "✅" if ok else "❌"
+                lines.append(f"  {emoji} {label}")
         await self._save_credentials()
         yield event.plain_result("\n".join(lines))
 

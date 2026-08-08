@@ -46,6 +46,8 @@ class CheckinResult:
     status: CheckinStatus
     message: str = ""
     reward: str = ""
+    game: str = ""               # 游戏中文名（如「明日方舟」「绝区零」）
+    display_platform: str = ""   # 平台中文名（如「米游社」「森空岛」）
 
     def __str__(self) -> str:
         tag = f"[{self.status.value}]"
@@ -55,6 +57,50 @@ class CheckinResult:
         if self.message:
             text += f" {self.message}"
         return text
+
+
+def format_results(results: list[CheckinResult]) -> str:
+    """将签到结果格式化为简洁的分组列表（供 CLI 输出与插件推送共用）。
+
+    输出示例::
+
+        - ✅ 森空岛/森空岛主号
+            - 明日方舟: 龙门币×100
+            - 终末地: 至纯源石×1
+        - ❌ 米游社/绝区零主号
+            - 凭证失效
+    """
+    if not results:
+        return "没有签到结果。"
+    # 按 (platform, account) 分组，保留出现顺序
+    groups: dict[tuple[str, str], list[CheckinResult]] = {}
+    order: list[tuple[str, str]] = []
+    for r in results:
+        key = (r.platform, r.account)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(r)
+
+    lines: list[str] = []
+    for key in order:
+        items = groups[key]
+        display = items[0].display_platform or key[0]
+        # 整体状态：所有非跳过项都 ok 才算成功
+        meaningful = [r for r in items if not r.status.is_neutral]
+        all_ok = all(r.status.is_ok for r in meaningful) if meaningful else True
+        emoji = "✅" if all_ok else "❌"
+        lines.append(f"- {emoji} {display}/{key[1]}")
+        for r in items:
+            if r.status.is_ok:
+                detail = r.reward or r.message or "签到成功"
+            else:
+                detail = r.message or "签到失败"
+            if r.game:
+                lines.append(f"    - {r.game}: {detail}")
+            else:
+                lines.append(f"    - {detail}")
+    return "\n".join(lines)
 
 
 class AuthExpiredError(Exception):
@@ -108,6 +154,7 @@ class PlatformBase(ABC):
     """社区 APP 游戏签到的统一接口。"""
 
     name: str = ""
+    display_name: str = ""  #: 平台中文名，子类覆盖（如「米游社」「森空岛」）
 
     def __init__(self, account: Account, http: Any, options: dict[str, Any] | None = None):
         self.account = account
@@ -119,28 +166,26 @@ class PlatformBase(ABC):
         """校验凭证是否有效。"""
 
     @abstractmethod
-    def game_signin(self) -> CheckinResult:
-        """游戏签到（领游戏内奖励）。"""
+    def game_signin(self) -> list[CheckinResult]:
+        """游戏签到（领游戏内奖励），返回每个游戏/角色的结果列表。"""
 
     def run_all(self) -> list[CheckinResult]:
         """执行游戏签到，返回结果列表。"""
         try:
-            result = self.game_signin()
+            return self.game_signin()
         except AuthExpiredError as e:
-            result = CheckinResult(
-                platform=self.name, account=self.account.name,
+            return [CheckinResult(
+                platform=self.name, account=self.account.name, display_platform=self.display_name,
                 action="game_signin", status=CheckinStatus.AUTH_EXPIRED, message=str(e),
-            )
+            )]
         except CaptchaNeededError as e:
-            result = CheckinResult(
-                platform=self.name, account=self.account.name,
+            return [CheckinResult(
+                platform=self.name, account=self.account.name, display_platform=self.display_name,
                 action="game_signin", status=CheckinStatus.CAPTCHA_NEEDED, message=str(e),
-            )
+            )]
         except Exception as e:  # noqa: BLE001
             logger.exception("%s/%s 游戏签到异常", self.name, self.account.name)
-            result = CheckinResult(
-                platform=self.name, account=self.account.name,
+            return [CheckinResult(
+                platform=self.name, account=self.account.name, display_platform=self.display_name,
                 action="game_signin", status=CheckinStatus.FAILED, message=repr(e),
-            )
-        logger.info(str(result))
-        return [result]
+            )]

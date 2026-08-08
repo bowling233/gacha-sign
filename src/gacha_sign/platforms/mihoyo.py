@@ -42,6 +42,7 @@ class MihoyoPlatform(PlatformBase):
     """米游社游戏签到（绝区零 ZZZ）。"""
 
     name = "mihoyo"
+    display_name = "米游社"
 
     def __init__(self, account: Account, http: HttpClient, options=None):
         super().__init__(account, http, options)
@@ -93,12 +94,12 @@ class MihoyoPlatform(PlatformBase):
         return resp.code == 0
 
     # ---- 游戏签到 ----
-    def game_signin(self) -> CheckinResult:
+    def game_signin(self) -> list[CheckinResult]:
         if "zzz" not in self.games:
-            return self._skip("game_signin", "未配置绝区零游戏签到")
+            return [self._skip("game_signin", "未配置绝区零游戏签到")]
         role = self._get_zzz_role()
         if not role:
-            return self._fail("game_signin", "未找到绑定的绝区零角色")
+            return [self._fail("game_signin", "未找到绑定的绝区零角色")]
         uid, region = role
         headers = self._game_headers()
         # 查询是否已签到
@@ -110,7 +111,7 @@ class MihoyoPlatform(PlatformBase):
         if info.code == 0:
             data = info.data or {}
             if isinstance(data, dict) and data.get("is_sign"):
-                return self._ok("game_signin", "今日已签到", reward_text, CheckinStatus.ALREADY_SIGNED)
+                return [self._ok("game_signin", "今日已签到", reward_text, CheckinStatus.ALREADY_SIGNED)]
         # 执行签到
         resp = self._http.post_json(
             URL_ZZZ_SIGN, headers=headers,
@@ -121,12 +122,12 @@ class MihoyoPlatform(PlatformBase):
             data = resp.data or {}
             if isinstance(data, dict) and data.get("success") == 1:
                 raise CaptchaNeededError("游戏签到触发验证码(success=1)")
-            return self._ok("game_signin", "游戏签到成功", reward_text)
+            return [self._ok("game_signin", "游戏签到成功", reward_text)]
         if code == -5003:
-            return self._ok("game_signin", "今日已签到", reward_text, CheckinStatus.ALREADY_SIGNED)
+            return [self._ok("game_signin", "今日已签到", reward_text, CheckinStatus.ALREADY_SIGNED)]
         if code == -100:
             raise AuthExpiredError("游戏签到凭证失效(retcode=-100)")
-        return self._fail("game_signin", f"游戏签到失败 retcode={code} {resp.message}")
+        return [self._fail("game_signin", f"游戏签到失败 retcode={code} {resp.message}")]
 
     def _get_zzz_role(self) -> tuple[str, str] | None:
         """通过 cookie 获取绑定的 ZZZ 游戏角色 (uid, region)。"""
@@ -166,11 +167,11 @@ class MihoyoPlatform(PlatformBase):
         return ""
 
     # ---- 结果构造辅助 ----
-    def _ok(self, action: str, message: str, reward: str = "", status: CheckinStatus = CheckinStatus.SUCCESS) -> CheckinResult:
-        return CheckinResult(self.name, self.account.name, action, status, message, reward)
+    def _ok(self, action: str, message: str, reward: str = "", status: CheckinStatus = CheckinStatus.SUCCESS, game: str = "绝区零") -> CheckinResult:
+        return CheckinResult(self.name, self.account.name, action, status, message, reward, game, self.display_name)
 
-    def _fail(self, action: str, message: str) -> CheckinResult:
-        return CheckinResult(self.name, self.account.name, action, CheckinStatus.FAILED, message)
+    def _fail(self, action: str, message: str, game: str = "绝区零") -> CheckinResult:
+        return CheckinResult(self.name, self.account.name, action, CheckinStatus.FAILED, message, "", game, self.display_name)
 
-    def _skip(self, action: str, message: str) -> CheckinResult:
-        return CheckinResult(self.name, self.account.name, action, CheckinStatus.SKIPPED, message)
+    def _skip(self, action: str, message: str, game: str = "") -> CheckinResult:
+        return CheckinResult(self.name, self.account.name, action, CheckinStatus.SKIPPED, message, "", game, self.display_name)

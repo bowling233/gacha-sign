@@ -1,9 +1,9 @@
 {
   "accounts": {
-    "description": "账号列表（JSON 数组）",
+    "description": "账号列表（YAML 文本，即 config.yaml 中 accounts 的数组内容）",
     "type": "text",
-    "default": "[]",
-    "hint": "示例：[{\"name\":\"异环\",\"platform\":\"tajiduo\",\"phone\":\"手机号\",\"password\":\"密码\"},{\"name\":\"绝区零\",\"platform\":\"mihoyo\",\"cookie\":\"APP抓包cookie\"},{\"name\":\"鸣潮\",\"platform\":\"kuro\",\"token\":\"APP抓包token\"},{\"name\":\"森空岛\",\"platform\":\"skland\",\"phone\":\"手机号\",\"password\":\"密码\"}]"
+    "default": "",
+    "hint": "YAML 格式，示例：\n- name: 森空岛\n  platform: skland\n  phone: 手机号\n  password: 密码\n- name: 绝区零\n  platform: mihoyo\n  cookie: APP抓包cookie\n- name: 鸣潮\n  platform: kuro\n  token: APP抓包token"
   },
   "auto_sign_enabled": {
     "description": "启用定时自动签到",

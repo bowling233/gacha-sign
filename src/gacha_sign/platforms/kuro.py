@@ -56,6 +56,7 @@ class KuroPlatform(PlatformBase):
     """
 
     name = "kuro"
+    display_name = "库街区"
 
     def __init__(self, account: Account, http: HttpClient, options=None):
         super().__init__(account, http, options)
@@ -125,9 +126,9 @@ class KuroPlatform(PlatformBase):
         return False
 
     # ---- 游戏签到 ----
-    def game_signin(self) -> CheckinResult:
+    def game_signin(self) -> list[CheckinResult]:
         if not self._ensure_role():
-            return self._fail("game_signin", "未找到鸣潮角色")
+            return [self._fail("game_signin", "未找到鸣潮角色")]
         headers = self._webview_headers()
         data = {
             "gameId": WUWA_GAME_ID,
@@ -140,21 +141,17 @@ class KuroPlatform(PlatformBase):
         code = resp.code
         if code == CODE_SUCCESS:
             reward = self._query_reward(headers)
-            msg = "鸣潮游戏签到成功"
-            if reward:
-                msg += f"，奖励:{reward}"
-            result = self._ok("game_signin", msg, reward)
             if self.auto_replenish:
                 self._try_replenish(data, headers)
-            return result
+            return [self._ok("game_signin", "鸣潮游戏签到成功", reward)]
         if code == CODE_ALREADY_SIGNED:
             reward = self._query_reward(headers)
-            return self._ok("game_signin", "鸣潮今日已签到", reward, CheckinStatus.ALREADY_SIGNED)
+            return [self._ok("game_signin", "鸣潮今日已签到", reward, CheckinStatus.ALREADY_SIGNED)]
         if code == CODE_LOGIN_EXPIRED:
             raise AuthExpiredError("游戏签到失败：token 已过期")
         if code == CODE_USER_INFO_ERROR:
-            return self._fail("game_signin", "游戏签到失败：用户信息异常(code=1513)")
-        return self._fail("game_signin", f"游戏签到失败 code={code} {resp.message}")
+            return [self._fail("game_signin", "游戏签到失败：用户信息异常(code=1513)")]
+        return [self._fail("game_signin", f"游戏签到失败 code={code} {resp.message}")]
 
     def _query_reward(self, headers: dict) -> str:
         """查询今日签到奖励名。"""
@@ -182,8 +179,8 @@ class KuroPlatform(PlatformBase):
             pass
 
     # ---- 结果构造辅助 ----
-    def _ok(self, action: str, message: str, reward: str = "", status: CheckinStatus = CheckinStatus.SUCCESS) -> CheckinResult:
-        return CheckinResult(self.name, self.account.name, action, status, message, reward)
+    def _ok(self, action: str, message: str, reward: str = "", status: CheckinStatus = CheckinStatus.SUCCESS, game: str = "鸣潮") -> CheckinResult:
+        return CheckinResult(self.name, self.account.name, action, status, message, reward, game, self.display_name)
 
-    def _fail(self, action: str, message: str) -> CheckinResult:
-        return CheckinResult(self.name, self.account.name, action, CheckinStatus.FAILED, message)
+    def _fail(self, action: str, message: str, game: str = "鸣潮") -> CheckinResult:
+        return CheckinResult(self.name, self.account.name, action, CheckinStatus.FAILED, message, "", game, self.display_name)

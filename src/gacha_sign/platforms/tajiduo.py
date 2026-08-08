@@ -69,6 +69,7 @@ class TajiduoPlatform(PlatformBase):
     """塔吉多签到（针对异环）。"""
 
     name = "tajiduo"
+    display_name = "塔吉多"
 
     def __init__(self, account: Account, http: HttpClient, options=None):
         super().__init__(account, http, options)
@@ -190,10 +191,10 @@ class TajiduoPlatform(PlatformBase):
         return self._get_role_ids()
 
     # ---- 游戏签到 ----
-    def game_signin(self) -> CheckinResult:
+    def game_signin(self) -> list[CheckinResult]:
         role_ids = self._ensure_role_ids()
         if not role_ids:
-            return self._fail("game_signin", "未找到异环角色")
+            return [self._fail("game_signin", "未找到异环角色")]
         candidates = self._candidate_game_ids()
         headers = {
             "platform": "android",
@@ -202,16 +203,16 @@ class TajiduoPlatform(PlatformBase):
             "appversion": APPVERSION,
             "User-Agent": OKHTTP_UA,
         }
-        msgs: list[str] = []
-        overall_ok = False
+        results: list[CheckinResult] = []
         for role_id in role_ids:
             ok, msg = self._sign_one_role(role_id, candidates, headers)
-            if ok:
-                overall_ok = True
-            msgs.append(f"角色{role_id}: {msg}")
-        if overall_ok:
-            return self._ok("game_signin", "；".join(msgs))
-        return self._fail("game_signin", "；".join(msgs))
+            results.append(self._role_result(role_id, ok, msg))
+        return results
+
+    def _role_result(self, role_id: str, ok: bool, msg: str) -> CheckinResult:
+        if ok:
+            return self._ok("game_signin", f"角色{role_id}: {msg}")
+        return self._fail("game_signin", f"角色{role_id}: {msg}")
 
     def _sign_one_role(self, role_id: str, candidates: list[str], headers: dict) -> tuple[bool, str]:
         """对单个角色尝试签到（多 gameId 候选回退）。"""
@@ -350,8 +351,8 @@ class TajiduoPlatform(PlatformBase):
         self._user_center_login(token, str(user_id))
 
     # ---- 结果构造辅助 ----
-    def _ok(self, action: str, message: str, reward: str = "", status: CheckinStatus = CheckinStatus.SUCCESS) -> CheckinResult:
-        return CheckinResult(self.name, self.account.name, action, status, message, reward)
+    def _ok(self, action: str, message: str, reward: str = "", status: CheckinStatus = CheckinStatus.SUCCESS, game: str = "异环") -> CheckinResult:
+        return CheckinResult(self.name, self.account.name, action, status, message, reward, game, self.display_name)
 
-    def _fail(self, action: str, message: str) -> CheckinResult:
-        return CheckinResult(self.name, self.account.name, action, CheckinStatus.FAILED, message)
+    def _fail(self, action: str, message: str, game: str = "异环") -> CheckinResult:
+        return CheckinResult(self.name, self.account.name, action, CheckinStatus.FAILED, message, "", game, self.display_name)
