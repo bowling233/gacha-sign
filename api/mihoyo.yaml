@@ -1,0 +1,459 @@
+openapi: 3.1.0
+info:
+  title: 米游社（绝区零 / 原神）签到与社区 API
+  version: "2.112.0"
+  description: |
+    米游社 APP 签到 API，覆盖三类动作：
+
+    - **游戏签到**（`act-nap-api.mihoyo.com` / `api-takumi.mihoyo.com` 的 luna 接口）
+    - **社区签到**（`bbs-api.miyoushe.com`，需 DS2 签名 + stoken）
+    - **社区任务**（浏览 / 点赞 / 分享，`bbs-api.miyoushe.com`）
+
+    # 鉴权与请求头
+
+    凭证为抓包获取的 **cookie**（需含 `cookie_token_v2` / `ltoken_v2` 等 v2 字段）
+    与 **stoken**（社区接口必需）。社区接口的 cookie 由
+    `stuid=<account_id>;stoken=<stoken>;mid=<account_mid_v2>` 组合而成。
+
+    所有接口需要 **DS（Dynamic Secret）签名**：
+
+    - 游戏 / 社区任务接口用**简单 DS**：`DS = "{t},{r},{md5(salt={salt}&t={t}&r={r})}"`
+      ，`r` 为 6 位小写字母+数字，`salt` = `47f15f1b66bee46b816115d8e8e6ebb6`。
+    - 社区签到用 **DS2**：在简单 DS 基础上加入 body/query，
+      `md5(salt={salt}&t={t}&r={r}&b={body}&q={query})`，`r` 为 `100001~200000`，
+      `salt` = `t0qEgfub6cvueAPgR5m9aQWWVciEer7v`。
+
+    常用头部：`x-rpc-app_version`（如 `2.112.0`）、`x-rpc-client_type`
+    （`2`=APP / `5`=Web）、`x-rpc-device_id`、`Cookie`、`DS`。
+    原神签到还需 `x-rpc-signgame: hk4e`，否则返回 `retcode=-500012`。
+
+    > 本项目用 `apiKey` 近似建模 `Cookie` 与 `DS`，签名算法见上方说明与
+    > `src/gacha_sign/platforms/mihoyo.py`。
+
+    # 响应封套
+
+    ```json
+    { "retcode": 0, "message": "OK", "data": {...} }
+    ```
+
+    常见 `retcode`：`0` 成功、`-5003` 已签到、`-100` 凭证失效、
+    `1034` 触发验证码、`-500012` 缺少 signgame 头。
+
+    # 游戏签到配置
+
+    | 游戏 | game_biz | act_id | luna 路径 | signgame |
+    | --- | --- | --- | --- | --- |
+    | 绝区零 | `nap_cn` | `e202406242138391` | `act-nap-api.mihoyo.com/event/luna/zzz/{info,home,sign}` | `zzz` |
+    | 原神 | `hk4e_cn` | `e202311201442471` | `api-takumi.mihoyo.com/event/luna/hk4e/{info,home,sign}` | `hk4e` |
+
+    # 社区签到 gids
+
+    `gids` 是论坛 `id`（**不是** forumId）：绝区零 = `8`、原神 = `2`。
+    帖子列表 `forum_id`：绝区零 = `57`、原神 = `26`。每日只需签到一次即得全部积分。
+
+    > 响应 schema 基于真实抓包（`scripts/probe_api.py`）。
+servers:
+  - url: https://api-takumi.mihoyo.com
+    description: 米游社 Web/Takumi API（角色查询、原神 luna 签到）
+  - url: https://act-nap-api.mihoyo.com
+    description: 绝区零 luna 签到
+  - url: https://bbs-api.miyoushe.com
+    description: 社区接口（签到 / 任务 / 帖子）
+tags:
+  - name: auth
+    description: 角色查询（凭证校验）
+  - name: game_checkin
+    description: 游戏签到（luna 接口）
+  - name: bbs_checkin
+    description: 社区签到（领米游币）
+  - name: bbs_tasks
+    description: 社区任务（浏览 / 点赞 / 分享）
+
+components:
+  securitySchemes:
+    MihoyoCookie:
+      type: apiKey
+      in: header
+      name: Cookie
+      description: 抓包 cookie（含 cookie_token_v2 等）。社区接口实际传 stoken 组合 cookie。
+    MihoyoDS:
+      type: apiKey
+      in: header
+      name: DS
+      description: Dynamic Secret 签名，算法见 info.description。
+  schemas:
+    Envelope:
+      type: object
+      required: [retcode, message]
+      properties:
+        retcode:
+          type: integer
+          description: "0 = 成功；-5003 = 已签到；-100 = 凭证失效；1034 = 验证码；-500012 = 缺 signgame"
+          example: 0
+        message: { type: string, example: OK }
+        data:
+          description: 业务数据，结构随接口而异。
+    GameRole:
+      type: object
+      properties:
+        game_biz: { type: string, example: nap_cn }
+        region: { type: string, example: prod_gf_cn }
+        game_uid: { type: string, example: "100000000" }
+        nickname: { type: string }
+        level: { type: integer }
+        region_name: { type: string, example: 新艾利都 }
+        is_chosen: { type: boolean }
+        is_official: { type: boolean }
+        is_banned: { type: boolean }
+      additionalProperties: true
+    LunaInfo:
+      type: object
+      description: 游戏签到状态
+      properties:
+        total_sign_day: { type: integer, description: 已签天数 }
+        today: { type: string, example: "2026-08-09" }
+        is_sign: { type: boolean, description: 今日是否已签到 }
+        sign_cnt_missed: { type: integer, description: 漏签天数 }
+        is_sub: { type: boolean }
+        short_sign_day: { type: integer }
+      additionalProperties: true
+    Award:
+      type: object
+      properties:
+        name: { type: string, example: 正式调查员记录 }
+        cnt: { type: integer, example: 2 }
+        icon: { type: string, description: 奖励图标 URL }
+      additionalProperties: true
+    LunaHome:
+      type: object
+      properties:
+        month: { type: integer }
+        biz: { type: string, example: zzz }
+        resign: { type: boolean }
+        awards:
+          type: array
+          items: { $ref: "#/components/schemas/Award" }
+      additionalProperties: true
+    MissionState:
+      type: object
+      properties:
+        mission_id: { type: integer, description: "58=签到 59=浏览 60=点赞 61=分享 等" }
+        mission_key: { type: string }
+        happened_times: { type: integer }
+        is_get_award: { type: boolean }
+        process: { type: integer }
+      additionalProperties: true
+
+paths:
+  /binding/api/getUserGameRolesByCookie:
+    get:
+      tags: [auth, game_checkin]
+      summary: 按 cookie 获取游戏角色（凭证校验）
+      servers:
+        - url: https://api-takumi.mihoyo.com
+      security: [{ MihoyoCookie: [], MihoyoDS: [] }]
+      parameters:
+        - name: game_biz
+          in: query
+          required: true
+          schema: { type: string, example: nap_cn }
+          description: "`nap_cn`=绝区零，`hk4e_cn`=原神"
+      responses:
+        "200":
+          description: 角色列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          list:
+                            type: array
+                            items: { $ref: "#/components/schemas/GameRole" }
+
+  /event/luna/{prefix}/info:
+    get:
+      tags: [game_checkin]
+      summary: 查询签到状态
+      description: "`prefix` 为 `zzz` 或 `hk4e`；原神须带 `x-rpc-signgame: hk4e`。"
+      servers:
+        - url: https://act-nap-api.mihoyo.com
+        - url: https://api-takumi.mihoyo.com
+      security: [{ MihoyoCookie: [], MihoyoDS: [] }]
+      parameters:
+        - name: prefix
+          in: path
+          required: true
+          schema: { type: string, enum: [zzz, hk4e] }
+        - name: act_id
+          in: query
+          required: true
+          schema: { type: string }
+        - name: region
+          in: query
+          required: true
+          schema: { type: string }
+        - name: uid
+          in: query
+          required: true
+          schema: { type: string }
+        - name: lang
+          in: query
+          required: true
+          schema: { type: string, example: zh-cn }
+      responses:
+        "200":
+          description: 签到状态
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      data: { $ref: "#/components/schemas/LunaInfo" }
+
+  /event/luna/{prefix}/home:
+    get:
+      tags: [game_checkin]
+      summary: 获取当月奖励列表
+      servers:
+        - url: https://act-nap-api.mihoyo.com
+        - url: https://api-takumi.mihoyo.com
+      security: [{ MihoyoCookie: [], MihoyoDS: [] }]
+      parameters:
+        - name: prefix
+          in: path
+          required: true
+          schema: { type: string, enum: [zzz, hk4e] }
+        - name: act_id
+          in: query
+          required: true
+          schema: { type: string }
+        - name: lang
+          in: query
+          required: true
+          schema: { type: string, example: zh-cn }
+      responses:
+        "200":
+          description: 奖励列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      data: { $ref: "#/components/schemas/LunaHome" }
+
+  /event/luna/{prefix}/sign:
+    post:
+      tags: [game_checkin]
+      summary: 执行游戏签到
+      description: "`retcode=-5003` 表示已签到；原神须带 `x-rpc-signgame: hk4e`。"
+      servers:
+        - url: https://act-nap-api.mihoyo.com
+        - url: https://api-takumi.mihoyo.com
+      security: [{ MihoyoCookie: [], MihoyoDS: [] }]
+      parameters:
+        - name: prefix
+          in: path
+          required: true
+          schema: { type: string, enum: [zzz, hk4e] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [act_id, region, uid]
+              properties:
+                act_id: { type: string }
+                region: { type: string }
+                uid: { type: string }
+                lang: { type: string, example: zh-cn }
+      responses:
+        "200":
+          description: 签到结果（`data.success=1` 表示触发验证码）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          success: { type: integer, description: "1 = 触发验证码" }
+
+  /apihub/wapi/getUserMissionsState:
+    get:
+      tags: [bbs_checkin, bbs_tasks]
+      summary: 查询社区任务状态（含签到任务）
+      description: WebView 风格头 + 完整 cookie，无 DS。`mission_id` 58=签到 59=浏览 60=点赞 61=分享。
+      servers:
+        - url: https://bbs-api.miyoushe.com
+      security: [{ MihoyoCookie: [] }]
+      parameters:
+        - name: point_sn
+          in: query
+          required: true
+          schema: { type: string, example: myb }
+      responses:
+        "200":
+          description: 任务状态
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          states:
+                            type: array
+                            items: { $ref: "#/components/schemas/MissionState" }
+                          already_received_points: { type: integer }
+                          total_points: { type: integer }
+                          today_total_points: { type: integer }
+                          can_get_points: { type: integer }
+
+  /apihub/app/api/signIn:
+    post:
+      tags: [bbs_checkin]
+      summary: 执行社区签到（每日 30 米游币，需 stoken + DS2）
+      servers:
+        - url: https://bbs-api.miyoushe.com
+      security: [{ MihoyoCookie: [], MihoyoDS: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [gids]
+              properties:
+                gids: { type: string, example: "8", description: 论坛 id（绝区零=8 原神=2） }
+      responses:
+        "200":
+          description: 签到结果（多次签到积分返回 0）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /post/api/getForumPostList:
+    get:
+      tags: [bbs_tasks]
+      summary: 帖子列表（获取 post_id）
+      servers:
+        - url: https://bbs-api.miyoushe.com
+      security: [{ MihoyoCookie: [], MihoyoDS: [] }]
+      parameters:
+        - name: forum_id
+          in: query
+          required: true
+          schema: { type: string, example: "57", description: 绝区零=57 原神=26 }
+        - name: is_good
+          in: query
+          schema: { type: string, example: "false" }
+        - name: is_hot
+          in: query
+          schema: { type: string, example: "false" }
+        - name: page_size
+          in: query
+          schema: { type: integer, example: 20 }
+        - name: sort_type
+          in: query
+          schema: { type: integer, example: 1 }
+      responses:
+        "200":
+          description: 帖子列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          list:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                post:
+                                  type: object
+                                  properties:
+                                    post_id: { type: string }
+                                    subject: { type: string }
+                                  additionalProperties: true
+                              additionalProperties: true
+
+  /post/api/getPostFull:
+    get:
+      tags: [bbs_tasks]
+      summary: 浏览帖子（每日 3 次，task_id=59）
+      servers:
+        - url: https://bbs-api.miyoushe.com
+      security: [{ MihoyoCookie: [], MihoyoDS: [] }]
+      parameters:
+        - name: post_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 帖子详情
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /apihub/sapi/upvotePost:
+    post:
+      tags: [bbs_tasks]
+      summary: 点赞帖子（每日 5 次，task_id=60）
+      servers:
+        - url: https://bbs-api.miyoushe.com
+      security: [{ MihoyoCookie: [], MihoyoDS: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [post_id]
+              properties:
+                post_id: { type: string }
+                is_cancel: { type: boolean, example: false }
+      responses:
+        "200":
+          description: 点赞结果
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /apihub/api/getShareConf:
+    get:
+      tags: [bbs_tasks]
+      summary: 分享帖子（每日 1 次，task_id=61）
+      servers:
+        - url: https://bbs-api.miyoushe.com
+      security: [{ MihoyoCookie: [], MihoyoDS: [] }]
+      parameters:
+        - name: entity_id
+          in: query
+          required: true
+          schema: { type: string, description: post_id }
+        - name: entity_type
+          in: query
+          required: true
+          schema: { type: integer, example: 1 }
+      responses:
+        "200":
+          description: 分享结果
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }

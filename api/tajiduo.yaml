@@ -1,0 +1,494 @@
+openapi: 3.1.0
+info:
+  title: 塔吉多（异环 Neverness to Everness）签到与社区 API
+  version: "1.2.5"
+  description: |
+    塔吉多 APP（`com.pwrd.htassistant`）API。凭证为**手机号 + 密码**，自动登录。
+
+    # 登录链路
+
+    1. `POST /m/newApi/login`（laohu SDK，`user.laohu.com`）→ `result.token` + `userId`
+       - 字段需 **MD5 签名** `sign = md5(按 key 排序拼接的 value + SECRET)`
+       - 明文失败（`BAD_REQUEST`）时改为 AES-128-ECB 加密 `username`/`password` 重试
+    2. `POST /usercenter/api/login`（`bbs-api.tajiduo.com`）→ `accessToken` + `refreshToken` + `uid`
+    3. `POST /usercenter/api/refreshToken` → 轮换取新的 `accessToken`/`refreshToken`
+       （`refreshToken` 每次刷新轮换，失效返回 HTTP 402）
+
+    # 请求头
+
+    业务接口统一头部：`platform: android`、`authorization: <accessToken>`、
+    `uid`、`deviceid`、`appversion: 1.1.0`、
+    `Content-Type: application/x-www-form-urlencoded`、`User-Agent: okhttp/4.12.0`。
+
+    > `appversion` 对 usercenter 接口校验严格，当前可用值为 `1.1.0`。
+
+    # 响应封套
+
+    ```json
+    { "code": 0, "msg": "ok", "data": {...}, "ok": true }
+    ```
+
+    `code=0`（或 `ok=true`）即成功。`HTTP 402` 表示 refreshToken 失效。
+
+    # 常量
+
+    - 异环 `gameId` = `1289`（候选含 `1257`）
+    - 异环社区 `communityId` = `2`
+    - laohu SDK `appId` = `10550`；用户中心 `appId` = `10551`
+    - laohu 签名 `SECRET` = `89155cc4e8634ec5b1b6364013b23e3e`（同时为 AES key 源）
+
+    > 响应 schema 基于真实抓包（`scripts/probe_api.py`）。
+servers:
+  - url: https://user.laohu.com
+    description: laohu SDK（密码登录）
+  - url: https://bbs-api.tajiduo.com
+    description: 塔吉多业务 API
+tags:
+  - name: auth
+    description: 登录链路（laohu → usercenter → refreshToken）
+  - name: game_checkin
+    description: 游戏签到（异环）
+  - name: bbs_checkin
+    description: 社区签到
+  - name: bbs_tasks
+    description: 社区每日任务（浏览 / 点赞 / 分享）
+
+components:
+  securitySchemes:
+    TajiduoAuth:
+      type: apiKey
+      in: header
+      name: authorization
+      description: accessToken（业务接口）或 refreshToken（刷新接口）。
+  schemas:
+    Envelope:
+      type: object
+      required: [code, msg]
+      properties:
+        code: { type: integer, description: "0 = 成功", example: 0 }
+        msg: { type: string, example: ok }
+        ok: { type: boolean }
+        data:
+          description: 业务数据，结构随接口而异。
+    GameRole:
+      type: object
+      properties:
+        gameId: { type: integer, example: 1289 }
+        roleId: { type: integer, example: 100000000 }
+        roleName: { type: string }
+        serverId: { type: integer, example: 14001 }
+        serverName: { type: string, example: 异环 }
+        lev: { type: integer }
+        gender: { type: integer }
+      additionalProperties: true
+    SignInState:
+      type: object
+      properties:
+        day: { type: integer, description: 当月第几天 }
+        days: { type: integer, description: 已签天数 }
+        month: { type: integer }
+        todaySign: { type: boolean, description: 今日是否已签 }
+        reSignCnt: { type: integer, description: 已补签次数 }
+      additionalProperties: true
+    Reward:
+      type: object
+      properties:
+        name: { type: string, example: 甲硬币 }
+        num: { type: integer, example: 10000 }
+        icon: { type: string }
+      additionalProperties: true
+    Post:
+      type: object
+      properties:
+        postId: { type: integer }
+        subject: { type: string }
+        uid: { type: integer }
+        type: { type: integer }
+        communityId: { type: integer }
+        postStat:
+          type: object
+          properties:
+            likeNum: { type: integer }
+            commentNum: { type: integer }
+            collectNum: { type: integer }
+            readNum: { type: integer }
+          additionalProperties: true
+        selfOperation:
+          type: object
+          properties:
+            liked: { type: boolean }
+      additionalProperties: true
+
+paths:
+  /m/newApi/login:
+    post:
+      tags: [auth]
+      summary: laohu SDK 密码登录
+      description: |
+        返回 laohu `token` 与 `userId`，用于下一步 usercenter 登录。
+        `sign = md5(按参数名排序拼接各 value + SECRET)`；
+        明文失败时 `username`/`password` 改用 AES-128-ECB 加密重试。
+      servers: [{ url: https://user.laohu.com }]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, password, appId, deviceId, sign]
+              properties:
+                username: { type: string, description: 手机号（或 AES 加密串） }
+                password: { type: string, description: 密码（或 AES 加密串） }
+                appId: { type: string, example: "10550" }
+                deviceId: { type: string }
+                sign: { type: string, description: MD5 签名 }
+                deviceType: { type: string }
+                deviceName: { type: string }
+                deviceModel: { type: string }
+                deviceSys: { type: string, example: "12" }
+                versionCode: { type: string, example: "1" }
+                type: { type: string, example: "16" }
+                areaCodeId: { type: string, example: "1" }
+                sdkVersion: { type: string, example: 4.129.0 }
+                bid: { type: string, example: com.pwrd.htassistant }
+                channelId: { type: string, example: "1" }
+                t: { type: string, description: 时间戳 }
+      responses:
+        "200":
+          description: 登录结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer }
+                  result:
+                    type: object
+                    properties:
+                      token: { type: string }
+                      userId: { type: integer }
+
+  /usercenter/api/login:
+    post:
+      tags: [auth]
+      summary: 用 laohu token 换取 accessToken / refreshToken
+      servers: [{ url: https://bbs-api.tajiduo.com }]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [token, userIdentity, appId]
+              properties:
+                token: { type: string, description: laohu token }
+                userIdentity: { type: string, description: userId }
+                appId: { type: string, example: "10551" }
+      responses:
+        "200":
+          description: 返回 accessToken/refreshToken/uid
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          accessToken: { type: string }
+                          refreshToken: { type: string }
+                          uid: { type: integer }
+
+  /usercenter/api/refreshToken:
+    post:
+      tags: [auth]
+      summary: 刷新 accessToken（refreshToken 轮换）
+      description: "`authorization` 头传当前 refreshToken；HTTP 402 表示已失效需重新登录。"
+      servers: [{ url: https://bbs-api.tajiduo.com }]
+      security: [{ TajiduoAuth: [] }]
+      responses:
+        "200":
+          description: 返回新的 accessToken/refreshToken
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          accessToken: { type: string }
+                          refreshToken: { type: string }
+                          uid: { type: integer }
+        "402":
+          description: refreshToken 已失效
+
+  /usercenter/api/v2/getGameRoles:
+    get:
+      tags: [auth, game_checkin]
+      summary: 获取游戏角色列表
+      servers: [{ url: https://bbs-api.tajiduo.com }]
+      security: [{ TajiduoAuth: [] }]
+      parameters:
+        - name: gameId
+          in: query
+          required: true
+          schema: { type: string, example: "1289" }
+      responses:
+        "200":
+          description: 角色列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          bindRole: { type: integer, description: 绑定的主角色 ID }
+                          roles:
+                            type: array
+                            items: { $ref: "#/components/schemas/GameRole" }
+
+  /apihub/awapi/sign:
+    post:
+      tags: [game_checkin]
+      summary: 执行游戏签到（异环）
+      description: 多 gameId 候选回退（1289 / 1257）。已签到时 message 含「已签到」。
+      servers: [{ url: https://bbs-api.tajiduo.com }]
+      security: [{ TajiduoAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [roleId, gameId]
+              properties:
+                roleId: { type: string }
+                gameId: { type: string, example: "1289" }
+      responses:
+        "200":
+          description: 签到结果
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /apihub/awapi/signin/state:
+    get:
+      tags: [game_checkin]
+      summary: 查询签到状态
+      servers: [{ url: https://bbs-api.tajiduo.com }]
+      security: [{ TajiduoAuth: [] }]
+      parameters:
+        - name: gameId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 签到状态
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      data: { $ref: "#/components/schemas/SignInState" }
+
+  /apihub/awapi/sign/rewards:
+    get:
+      tags: [game_checkin]
+      summary: 获取签到奖励列表
+      servers: [{ url: https://bbs-api.tajiduo.com }]
+      security: [{ TajiduoAuth: [] }]
+      parameters:
+        - name: gameId
+          in: query
+          required: true
+          schema: { type: string }
+        - name: roleId
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: 奖励列表（按天）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Reward" }
+
+  /apihub/api/getSignState:
+    get:
+      tags: [bbs_checkin]
+      summary: 查询社区签到状态
+      servers: [{ url: https://bbs-api.tajiduo.com }]
+      security: [{ TajiduoAuth: [] }]
+      parameters:
+        - name: communityId
+          in: query
+          required: true
+          schema: { type: string, example: "2", description: 异环社区 = 2 }
+      responses:
+        "200":
+          description: "`data` 为 boolean，true = 今日已签到"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      data: { type: boolean }
+
+  /apihub/api/signin:
+    post:
+      tags: [bbs_checkin]
+      summary: 执行社区签到
+      servers: [{ url: https://bbs-api.tajiduo.com }]
+      security: [{ TajiduoAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [communityId]
+              properties:
+                communityId: { type: string, example: "2" }
+      responses:
+        "200":
+          description: 签到结果（`data` 含 exp / goldCoin）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          exp: { type: integer }
+                          goldCoin: { type: integer }
+
+  /apihub/api/getUserCoinTaskState:
+    get:
+      tags: [bbs_tasks]
+      summary: 金币任务进度
+      servers: [{ url: https://bbs-api.tajiduo.com }]
+      security: [{ TajiduoAuth: [] }]
+      responses:
+        "200":
+          description: 任务进度
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          todayGet: { type: integer, description: 今日已获金币 }
+                          todayTotal: { type: integer, description: 今日上限 }
+                          total: { type: integer, description: 累计金币 }
+
+  /bbs/api/getRecommendPostList:
+    get:
+      tags: [bbs_tasks]
+      summary: 推荐帖子列表（获取 postId）
+      servers: [{ url: https://bbs-api.tajiduo.com }]
+      security: [{ TajiduoAuth: [] }]
+      parameters:
+        - name: communityId
+          in: query
+          required: true
+          schema: { type: string, example: "2" }
+        - name: count
+          in: query
+          schema: { type: string, example: "20" }
+        - name: page
+          in: query
+          schema: { type: string, example: "1" }
+      responses:
+        "200":
+          description: 帖子列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          posts:
+                            type: array
+                            items: { $ref: "#/components/schemas/Post" }
+                          hasMore: { type: boolean }
+                          page: { type: integer }
+
+  /bbs/api/getPostFull:
+    get:
+      tags: [bbs_tasks]
+      summary: 浏览帖子（每日 3 次）
+      servers: [{ url: https://bbs-api.tajiduo.com }]
+      security: [{ TajiduoAuth: [] }]
+      parameters:
+        - name: postId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 帖子详情
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /bbs/api/post/like:
+    post:
+      tags: [bbs_tasks]
+      summary: 点赞帖子（每日 3 次）
+      servers: [{ url: https://bbs-api.tajiduo.com }]
+      security: [{ TajiduoAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [postId]
+              properties:
+                postId: { type: string }
+      responses:
+        "200":
+          description: 点赞结果
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /bbs/api/post/getShareData:
+    get:
+      tags: [bbs_tasks]
+      summary: 分享帖子（每日 1 次）
+      servers: [{ url: https://bbs-api.tajiduo.com }]
+      security: [{ TajiduoAuth: [] }]
+      parameters:
+        - name: postId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 分享数据
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }

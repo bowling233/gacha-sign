@@ -1,11 +1,6 @@
-"""塔吉多（异环 Neverness to everness）签到平台实现。
+"""塔吉多（异环 Neverness to Everness）签到平台实现。
 
-凭证：refreshToken（轮换存储到 credentials.json）+ deviceId + uid。
-通过 laohu SDK 密码登录获取 token，再通过 usercenter/api/login
-换取 accessToken/refreshToken。token 刷新用 usercenter/api/refreshToken。
-密码登录需 MD5 签名 + AES-128-ECB 字段加密；日常签到仅用 authorization 头。
-
-主要参考：reference/astrbot_plugin_nte/nte.py（端点、常量、签名、加密算法）。
+凭证与接口细节见 `docs/api/tajiduo.yaml`。
 """
 
 from __future__ import annotations
@@ -25,7 +20,7 @@ from ..base import (
 from ..http import HttpClient, ApiResponse
 
 # ---------------------------------------------------------------------------
-# 常量（来自 reference/astrbot_plugin_nte/nte.py）
+# 常量
 # ---------------------------------------------------------------------------
 APP_ID = "10550"                           # laohu SDK appId
 USER_CENTER_APP_ID = "10551"               # 塔吉多用户中心 appId
@@ -43,7 +38,7 @@ TYPE = "16"
 SDKVERSION = "4.129.0"
 BID = "com.pwrd.htassistant"
 CHANNELID = "1"
-# usercenter/login + refreshToken 对 appversion 校验严格，当前可用值是 1.1.0
+# usercenter 接口校验 appversion
 APPVERSION = "1.1.0"
 OKHTTP_UA = "okhttp/4.12.0"
 
@@ -363,7 +358,7 @@ class TajiduoPlatform(PlatformBase):
 
     # ---- 社区签到 ----
     def bbs_checkin(self) -> list[CheckinResult]:
-        """社区每日签到（communityId=2 异环社区）。"""
+        """社区每日签到。"""
         headers = self._native_headers()
         # 查询签到状态
         state = self._http.get(URL_BBS_SIGN_STATE, headers=headers, params={"communityId": COMMUNITY_ID})
@@ -389,7 +384,7 @@ class TajiduoPlatform(PlatformBase):
 
         msgs: list[str] = []
 
-        # 浏览帖子 ×3
+        # 浏览
         viewed = 0
         for pid in post_ids[:3]:
             resp = self._http.get(URL_BBS_POST_FULL, headers=headers, params={"postId": pid})
@@ -397,7 +392,7 @@ class TajiduoPlatform(PlatformBase):
                 viewed += 1
         msgs.append(f"浏览{viewed}/3")
 
-        # 点赞 ×3
+        # 点赞
         liked = 0
         for pid in post_ids[:3]:
             resp = self._http.post_form(URL_BBS_LIKE, data={"postId": pid}, headers=headers)
@@ -405,7 +400,7 @@ class TajiduoPlatform(PlatformBase):
                 liked += 1
         msgs.append(f"点赞{liked}/3")
 
-        # 分享 ×1
+        # 分享
         shared = 0
         if post_ids:
             resp = self._http.get(URL_BBS_SHARE, headers=headers, params={"postId": post_ids[0]})

@@ -1,11 +1,6 @@
-"""库街区（鸣潮 Wuthering Waves）游戏签到平台实现。
+"""库街区（鸣潮）签到平台实现。
 
-凭证：token（从库街区 APP 抓包获取的 JWT），不与设备绑定。
-游戏签到用 WebView 风格 header（Origin=web-static.kurobbs.com + devCode），
-否则被 WAF 拦截返回 code=102。角色查询用 okhttp 风格 header。
-
-鸣潮 gameId=3、serverId=76402e5b20be2c39f095a152090afddc。
-header 格式基于 MuMu 模拟器中库街区 APP v3.1.3 的真实抓包。
+凭证与接口细节见 `docs/api/kuro.yaml`。
 """
 
 from __future__ import annotations
@@ -60,11 +55,7 @@ WEBVIEW_UA = (
 
 
 class KuroPlatform(PlatformBase):
-    """库街区游戏签到（鸣潮）。
-
-    token 通过 APP 抓包获取（ADB + mitmproxy），不与设备绑定。
-    基础接口用 okhttp header，游戏签到用 WebView header。
-    """
+    """库街区（鸣潮）签到平台。"""
 
     name = "kuro"
     display_name = "库街区"
@@ -89,7 +80,7 @@ class KuroPlatform(PlatformBase):
 
     # ---- header ----
     def _okhttp_headers(self) -> dict[str, str]:
-        """okhttp 风格请求头（source=android），用于基础接口。"""
+        """okhttp 风格请求头，用于基础接口。"""
         return {
             "source": "android",
             "version": "3.1.3",
@@ -100,7 +91,7 @@ class KuroPlatform(PlatformBase):
         }
 
     def _webview_headers(self) -> dict[str, str]:
-        """WebView 风格请求头，用于游戏签到接口（WAF 校验必需）。"""
+        """WebView 风格请求头，用于游戏签到接口。"""
         return {
             "source": "android",
             "version": "3.1.3",
@@ -200,7 +191,7 @@ class KuroPlatform(PlatformBase):
 
     # ---- 社区签到 ----
     def bbs_checkin(self) -> list[CheckinResult]:
-        """社区每日签到（gameId=2），无需 GeeTest。"""
+        """社区每日签到。"""
         headers = self._okhttp_headers()
         # 查询签到状态
         info = self._http.post_form(URL_BBS_SIGNIN_INFO, data={"gameId": BBS_GAME_ID}, headers=headers)
@@ -221,7 +212,7 @@ class KuroPlatform(PlatformBase):
 
     # ---- 社区每日任务 ----
     def bbs_tasks(self) -> list[CheckinResult]:
-        """社区每日任务：浏览3篇帖子 + 点赞5次 + 分享1次。"""
+        """社区每日任务（浏览 / 点赞 / 分享）。"""
         headers = self._okhttp_headers()
         posts = self._get_post_list(headers)
         if not posts:
@@ -229,7 +220,7 @@ class KuroPlatform(PlatformBase):
 
         msgs: list[str] = []
 
-        # 浏览 3 篇帖子
+        # 浏览
         viewed = 0
         for p in posts[:3]:
             r = self._http.post_form(
@@ -241,7 +232,7 @@ class KuroPlatform(PlatformBase):
                 viewed += 1
         msgs.append(f"浏览{viewed}/3")
 
-        # 点赞 5 次
+        # 点赞
         liked = 0
         for p in posts[:5]:
             r = self._http.post_form(
@@ -263,7 +254,7 @@ class KuroPlatform(PlatformBase):
                 liked += 1
         msgs.append(f"点赞{liked}/5")
 
-        # 分享 1 次
+        # 分享
         shared = 0
         if posts:
             r = self._http.post_form(

@@ -1,12 +1,6 @@
 """森空岛（明日方舟 / 终末地）签到平台实现。
 
-凭证：手机号 + 密码（鹰角通行证全自动登录）。
-登录链路：密码登录拿 hypergryph token → OAuth grant code → skland cred。
-skland API 请求需 HMAC-SHA256 签名（key=credToken），头需数美设备指纹 dId。
-
-主要参考：
-- reference/Skland-Sign-In/skland_api.py（dId 生成、签名、签到流程）
-- reference/skyland-auto-sign/src/skyland.py（端点、登录方式）
+凭证与接口细节见 `docs/api/skland.yaml`。
 """
 
 from __future__ import annotations
@@ -66,7 +60,7 @@ URL_BBS_ITEM = f"{SK_BASE}/api/v1/item"
 URL_BBS_FEED = f"{SK_BASE}/api/v1/rec/index"
 URL_BBS_TASKS = f"{SK_BASE}/api/v1/score/tasks"
 
-# 社区 gameId（终末地=3，明日方舟=1）
+# 社区 gameId
 ENDFIELD_GAME_ID = "3"
 ARKNIGHTS_GAME_ID = "1"
 
@@ -290,7 +284,7 @@ class SklandPlatform(PlatformBase):
         self._cred_token = data["data"]["token"]
 
     def _ensure_cred(self) -> None:
-        """完整登录链路：密码 → token → grant → cred。"""
+        """执行完整登录链路。"""
         token = self._login_by_password()
         code = self._get_grant_code(token)
         self._get_cred(code)
@@ -446,7 +440,7 @@ class SklandPlatform(PlatformBase):
 
         msgs: list[str] = []
 
-        # 浏览内容 ×5
+        # 浏览内容
         viewed = 0
         for pid in post_ids[:5]:
             url = f"{URL_BBS_ITEM}?id={pid}&teenager=0"
@@ -456,7 +450,7 @@ class SklandPlatform(PlatformBase):
                 viewed += 1
         msgs.append(f"浏览{viewed}/5")
 
-        # 点赞 ×10
+        # 点赞
         liked = 0
         for pid in post_ids[:10]:
             body = json.dumps({"itemId": str(pid)}, separators=(",", ":"))
@@ -466,7 +460,7 @@ class SklandPlatform(PlatformBase):
                 liked += 1
         msgs.append(f"点赞{liked}/10")
 
-        # 分享 ×1（每个游戏各分享一次）
+        # 分享
         shared = 0
         for gid in [ENDFIELD_GAME_ID, ARKNIGHTS_GAME_ID]:
             body = json.dumps({"gameId": int(gid)}, separators=(",", ":"))

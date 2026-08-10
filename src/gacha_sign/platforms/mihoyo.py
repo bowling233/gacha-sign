@@ -1,13 +1,6 @@
-"""米游社（绝区零 / 原神等）签到平台实现。
+"""米游社（绝区零 / 原神）签到平台实现。
 
-凭证：cookie（从米游社 APP 抓包获取，需含 cookie_token_v2 / ltoken_v2 等 v2 字段）。
-
-三种签到动作：
-- game_checkin: 游戏每日签到（领游戏内奖励），通过 act.mihoyo.com 的 luna 接口
-- bbs_checkin: 社区签到（领米游币），通过 bbs-api.miyoushe.com，需 DS 签名
-- bbs_tasks: 社区任务（浏览/点赞/分享帖子，领米游币）
-
-参考：MihoyoBBSTools（DS 签名算法、act_id、社区任务接口）。
+凭证与接口细节见 `docs/api/mihoyo.yaml`。
 """
 
 from __future__ import annotations
@@ -39,7 +32,7 @@ CLIENT_TYPE_WEB = "5"
 WEB_API = "https://api-takumi.mihoyo.com"
 BBS_API = "https://bbs-api.miyoushe.com"
 
-# DS 签名 salts（来自 MihoyoBBSTools）
+# DS 签名 salts
 BBS_SALT = "47f15f1b66bee46b816115d8e8e6ebb6"
 BBS_SALT_X6 = "t0qEgfub6cvueAPgR5m9aQWWVciEer7v"
 
@@ -51,7 +44,7 @@ URL_BBS_POST_DETAIL = f"{BBS_API}/post/api/getPostFull"
 URL_BBS_LIKE = f"{BBS_API}/apihub/sapi/upvotePost"
 URL_BBS_SHARE = f"{BBS_API}/apihub/api/getShareConf"
 
-# 社区签到 gids 和帖子列表 forumId（已验证：zzz + genshin）
+# 社区签到 gids 与帖子列表 forumId
 FORUM_GIDS: dict[str, str] = {"zzz": "8", "genshin": "2"}
 FORUM_PAGE_IDS: dict[str, str] = {"zzz": "57", "genshin": "26"}
 
@@ -80,7 +73,7 @@ def _md5(text: str) -> str:
 
 
 def _make_ds(salt: str, body: str = "", query: str = "") -> str:
-    """生成米游社 DS2 签名（用于社区签到，含 body/query）。"""
+    """生成 DS2 签名（含 body/query）。"""
     t = str(int(time.time()))
     r = str(random.randint(100001, 200000))
     c = _md5(f"salt={salt}&t={t}&r={r}&b={body}&q={query}")
@@ -88,7 +81,7 @@ def _make_ds(salt: str, body: str = "", query: str = "") -> str:
 
 
 def _make_ds_simple(salt: str) -> str:
-    """生成米游社 DS 签名（用于社区任务，不含 body/query）。"""
+    """生成简单 DS 签名（不含 body/query）。"""
     t = str(int(time.time()))
     r = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
     c = _md5(f"salt={salt}&t={t}&r={r}")
@@ -152,8 +145,7 @@ class MihoyoPlatform(PlatformBase):
         return f"stuid={aid};stoken={self.stoken};mid={mid}"
 
     def _bbs_headers(self) -> dict[str, str]:
-        """社区接口请求头（okhttp 风格 + DS 签名 + stoken cookie）。
-        用于浏览/点赞/分享等操作。"""
+        """社区接口请求头。"""
         return {
             "DS": _make_ds_simple(BBS_SALT),
             "cookie": self._bbs_cookie(),
@@ -166,8 +158,7 @@ class MihoyoPlatform(PlatformBase):
         }
 
     def _bbs_task_headers(self) -> dict[str, str]:
-        """社区任务查询头（WebView 风格 + 完整 cookie，无 DS）。
-        用于查询任务状态。"""
+        """社区任务查询请求头。"""
         return {
             "Accept": "application/json, text/plain, */*",
             "Origin": "https://webstatic.mihoyo.com",
@@ -356,7 +347,6 @@ class MihoyoPlatform(PlatformBase):
             return None
         data = resp.data or {}
         states = data.get("states", []) if isinstance(data, dict) else []
-        # task_id: 58=sign, 59=read, 60=like, 61=share
         state_map = {s.get("mission_id"): s for s in states if isinstance(s, dict)}
         sign = state_map.get(58, {})
         read = state_map.get(59, {})
