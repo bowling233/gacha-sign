@@ -10,7 +10,7 @@
 | 社区 APP | 平台代号 | 支持游戏 | 凭证方式 |
 | --- | --- | --- | --- |
 | 米游社 | `mihoyo` | 绝区零、原神 | APP 抓包 cookie + stoken |
-| 库街区 | `kuro` | 鸣潮 | APP 抓包 token |
+| 库街区 | `kuro` | 鸣潮 | APP 抓包 token / 网页登录 token |
 | 塔吉多 | `tajiduo` | 异环 | 手机号 + 密码 |
 | 森空岛 | `skland` | 明日方舟、终末地 | 手机号 + 密码 |
 
@@ -44,18 +44,24 @@
 - 塔吉多（异环）/ 森空岛（明日方舟/终末地）：在 `config.yaml` 填写手机号和密码即可，程序自动登录并管理 token：
 
   ```yaml
-  - name: "异环主号"
+  - name: "账号名称"
     platform: tajiduo
     phone: "手机号"
     password: "密码"
   ```
 
-- 米游社（绝区零/原神）/ 库街区（鸣潮）：米游社需要 cookie（含 `cookie_token_v2` 等 v2 字段）和 stoken，库街区需要 token（`eyJ...` JWT，有效期约 30 天）。两者都通过模拟器或真机抓包获取。
-
-  米游社可配置多个游戏（默认仅绝区零）：
+- 库街区（鸣潮）：打开 [https://www.kurobbs.com/mc/home/9](https://www.kurobbs.com/mc/home/9)，使用手机验证码登录。登录成功后，在浏览器开发者工具 → Application → Local Storage 中找到 `auth_token` 的值，即为所需 token。
 
   ```yaml
-  - name: "米游社主号"
+  - name: "账号名称"
+    platform: kuro
+    token: "eyJ..."          # 网页登录 localStorage 或 APP 抓包获取
+  ```
+
+- 米游社（绝区零/原神）：米游社 APP 抓包获取 cookie（含 `cookie_token_v2` 等 v2 字段）和 stoken：
+
+  ```yaml
+  - name: "账号名称"
     platform: mihoyo
     games: ["zzz", "genshin"]
     cookie: "account_id=...;cookie_token_v2=..."

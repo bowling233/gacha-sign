@@ -388,9 +388,13 @@ class SklandPlatform(PlatformBase):
         data = resp.raw_json if isinstance(resp.raw_json, dict) else {}
         msg = data.get("message", "")
         if data.get("code") == 0:
-            awards = data.get("data", {}).get("awards", [])
+            d = data.get("data", {})
+            award_ids = d.get("awardIds", [])
+            resource_map = d.get("resourceInfoMap", {})
             names = "+".join(
-                f"{a.get('resource',{}).get('name','')}x{a.get('count',1)}" for a in awards
+                f"{resource_map.get(a.get('id'), {}).get('name', '')}x{resource_map.get(a.get('id'), {}).get('count', 1)}"
+                for a in award_ids
+                if a.get("id") in resource_map
             )
             return True, "签到成功", names
         if _ALREADY_SIGNED_RE.search(msg):

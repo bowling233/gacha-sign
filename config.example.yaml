@@ -11,7 +11,9 @@ accounts:
 
   - name: "鸣潮主号"
     platform: kuro
-    token: ""              # APP 抓包获取（JWT，有效期约30天）
+    token: ""              # APP 抓包或网页登录获取（JWT，有效期约30天）
+                           # 网页登录：打开 https://www.kurobbs.com/mc/home/9 ，
+                           # 手机验证码登录后在浏览器 localStorage 取 auth_token 值
 
   - name: "异环主号"
     platform: tajiduo

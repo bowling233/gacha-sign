@@ -88,6 +88,7 @@ class TajiduoPlatform(PlatformBase):
         self.device_id: str = self.account.cred_get("device_id", "") or ""
         self.uid: str = str(self.account.cred_get("uid", "") or "")
         self.role_ids: list[str] = list(self.account.cred_get("role_ids", []) or [])
+        self.role_names: dict[str, str] = dict(self.account.cred_get("role_names", {}) or {})
         self._access_token: str = ""
 
     # ---- 工具 ----
@@ -185,14 +186,22 @@ class TajiduoPlatform(PlatformBase):
             return []
         data = resp.raw_json.get("data") if isinstance(resp.raw_json, dict) else None
         roles = data.get("roles", []) if isinstance(data, dict) else []
-        ids = [str(r.get("roleId")) for r in roles if r.get("roleId")]
+        ids = []
+        names: dict[str, str] = {}
+        for r in roles:
+            rid = str(r.get("roleId", ""))
+            if rid:
+                ids.append(rid)
+                names[rid] = str(r.get("roleName", rid))
         if ids:
             self.role_ids = ids
             self.account.cred_set("role_ids", ids)
+            self.role_names = names
+            self.account.cred_set("role_names", names)
         return ids
 
     def _ensure_role_ids(self) -> list[str]:
-        if self.role_ids:
+        if self.role_ids and self.role_names:
             return self.role_ids
         return self._get_role_ids()
 
@@ -211,16 +220,15 @@ class TajiduoPlatform(PlatformBase):
         }
         results: list[CheckinResult] = []
         for role_id in role_ids:
-            ok, msg = self._sign_one_role(role_id, candidates, headers)
-            results.append(self._role_result(role_id, ok, msg))
+            ok, msg, reward = self._sign_one_role(role_id, candidates, headers)
+            name = self.role_names.get(role_id, role_id)
+            if ok:
+                results.append(self._ok("game_signin", msg, reward, game=name))
+            else:
+                results.append(self._fail("game_signin", msg, game=name))
         return results
 
-    def _role_result(self, role_id: str, ok: bool, msg: str) -> CheckinResult:
-        if ok:
-            return self._ok("game_signin", f"角色{role_id}: {msg}")
-        return self._fail("game_signin", f"角色{role_id}: {msg}")
-
-    def _sign_one_role(self, role_id: str, candidates: list[str], headers: dict) -> tuple[bool, str]:
+    def _sign_one_role(self, role_id: str, candidates: list[str], headers: dict) -> tuple[bool, str, str]:
         """对单个角色尝试签到（多 gameId 候选回退）。"""
         errors: list[str] = []
         for gid in candidates:
@@ -229,19 +237,19 @@ class TajiduoPlatform(PlatformBase):
             )
             if self._is_ok(resp):
                 reward = self._today_reward(role_id, gid)
-                return True, f"签到成功(gameId={gid})" + (f"，今日道具:{reward}" if reward else "")
+                return True, "签到成功", reward
             msg = resp.message or str(resp.raw_json)[:120]
             if self._is_already_signed(msg):
                 state = self._sign_state(gid)
                 reward = ""
-                if state and self._today_reward_from_state(role_id, gid, state):
+                if state:
                     reward = self._today_reward_from_state(role_id, gid, state)
                 if state and state.get("todaySign"):
-                    return True, f"今日已签到(gameId={gid})" + (f"，今日道具:{reward}" if reward else "")
-                errors.append(f"gameId={gid} 提示已签到但状态未签")
+                    return True, "今日已签到", reward
+                errors.append("已签到但状态未确认")
                 continue
-            errors.append(f"gameId={gid}: {msg}")
-        return False, "；".join(errors)
+            errors.append(msg)
+        return False, "；".join(errors), ""
 
     def _candidate_game_ids(self) -> list[str]:
         """候选 gameId 列表（去重）。"""

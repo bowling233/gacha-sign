@@ -1,10 +1,15 @@
 """库街区（鸣潮）签到平台实现。
 
-凭证与接口细节见 `docs/api/kuro.yaml`。
+凭证与接口细节见 `api/kuro.yaml`。
+
+token 来源可以是 APP 抓包（``source: android``）或网页登录
+（``source: h5``）。JWT 本身不含来源信息，无法从 token 判断，
+因此 :meth:`verify_credential` 会依次尝试两种 source 并缓存成功的一个。
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from ..base import (
@@ -15,6 +20,8 @@ from ..base import (
     PlatformBase,
 )
 from ..http import HttpClient
+
+_logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # 常量
@@ -28,6 +35,12 @@ CODE_SUCCESS = 200
 CODE_ALREADY_SIGNED = 1511
 CODE_USER_INFO_ERROR = 1513
 CODE_LOGIN_EXPIRED = 220
+
+# Token 来源 profile：JWT 与创建时的 source 绑定，无法互换。
+_SOURCE_PROFILES: dict[str, dict[str, str]] = {
+    "android": {"source": "android", "version": "3.1.3"},
+    "h5": {"source": "h5", "version": "3.2.2"},
+}
 
 URL_USER_MINE = f"{API_BASE}/user/mineV2"
 URL_ROLE_LIST = f"{API_BASE}/user/role/findRoleList"
@@ -69,6 +82,7 @@ class KuroPlatform(PlatformBase):
         self.role_id: str = self.account.cred_get("role_id", "") or ""
         self.user_id: str = self.account.cred_get("user_id", "") or ""
         self.dev_code: str = self.account.cred_get("dev_code", "") or ""
+        self.cred_source: str = self.account.cred_get("token_source", "") or ""
 
     def _ensure_dev_code(self) -> str:
         """生成或复用设备指纹（32位大写 hex），持久化到 credentials.json。"""
@@ -78,12 +92,17 @@ class KuroPlatform(PlatformBase):
             self.account.cred_set("dev_code", self.dev_code)
         return self.dev_code
 
+    def _source_profile(self) -> dict[str, str]:
+        """返回当前 token source 对应的 header profile。"""
+        return _SOURCE_PROFILES.get(self.cred_source, _SOURCE_PROFILES["android"])
+
     # ---- header ----
     def _okhttp_headers(self) -> dict[str, str]:
         """okhttp 风格请求头，用于基础接口。"""
+        p = self._source_profile()
         return {
-            "source": "android",
-            "version": "3.1.3",
+            "source": p["source"],
+            "version": p["version"],
             "token": self.token,
             "devCode": self._ensure_dev_code(),
             "Content-Type": "application/x-www-form-urlencoded",
@@ -92,16 +111,17 @@ class KuroPlatform(PlatformBase):
 
     def _webview_headers(self) -> dict[str, str]:
         """WebView 风格请求头，用于游戏签到接口。"""
+        p = self._source_profile()
         return {
-            "source": "android",
-            "version": "3.1.3",
+            "source": p["source"],
+            "version": p["version"],
             "token": self.token,
             "Content-Type": "application/x-www-form-urlencoded",
             "Origin": "https://web-static.kurobbs.com",
             "Referer": "https://web-static.kurobbs.com/",
             "X-Requested-With": "com.kurogame.kjq",
             "User-Agent": WEBVIEW_UA,
-            "devCode": f"0.0.0.0, {WEBVIEW_UA} KuroGameBox/3.1.3",
+            "devCode": f"0.0.0.0, {WEBVIEW_UA} KuroGameBox/{p['version']}",
             "Accept": "application/json, text/plain, */*",
         }
 
@@ -110,17 +130,33 @@ class KuroPlatform(PlatformBase):
         if not self.token:
             return False
         data = {"viewUserId": self.user_id} if self.user_id else {"type": 1}
-        resp = self._http.post_form(URL_USER_MINE, data=data, headers=self._okhttp_headers())
-        if resp.code == CODE_SUCCESS and isinstance(resp.data, dict):
-            mine = resp.data.get("mine", resp.data)
-            uid = mine.get("userId")
-            if uid:
-                self.user_id = str(uid)
-                self.account.cred_set("user_id", self.user_id)
-            return True
-        if resp.code == CODE_LOGIN_EXPIRED:
-            raise AuthExpiredError("库街区 token 已过期，请重新抓包获取")
-        return False
+
+        # JWT token 与创建时的 source 绑定，但 token 本身不含 source 信息。
+        # 策略：先尝试缓存的 source，失败则尝试另一种。
+        cached = self.cred_source
+        if cached and cached in _SOURCE_PROFILES:
+            sources = [cached] + [k for k in _SOURCE_PROFILES if k != cached]
+        else:
+            sources = list(_SOURCE_PROFILES.keys())
+
+        for source_key in sources:
+            self.cred_source = source_key
+            resp = self._http.post_form(URL_USER_MINE, data=data, headers=self._okhttp_headers())
+            if resp.code == CODE_SUCCESS and isinstance(resp.data, dict):
+                if source_key != cached:
+                    self.account.cred_set("token_source", source_key)
+                    _logger.info("库街区 token source 检测为 %s", source_key)
+                mine = resp.data.get("mine", resp.data)
+                uid = mine.get("userId")
+                if uid:
+                    self.user_id = str(uid)
+                    self.account.cred_set("user_id", self.user_id)
+                return True
+            if resp.code != CODE_LOGIN_EXPIRED:
+                return False
+
+        self.cred_source = ""
+        raise AuthExpiredError("库街区 token 已过期，请重新获取")
 
     def _ensure_role(self) -> bool:
         """获取鸣潮角色 ID（首次运行自动回填）。"""

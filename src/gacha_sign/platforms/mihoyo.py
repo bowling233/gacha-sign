@@ -245,14 +245,19 @@ class MihoyoPlatform(PlatformBase):
     def _query_reward(self, base: str, prefix: str, act_id: str, headers: dict, info_resp: ApiResponse) -> str:
         try:
             data = info_resp.data or {}
-            day = int(data.get("total_sign_day", 0)) if isinstance(data, dict) else 0
+            if not isinstance(data, dict):
+                return ""
+            day = int(data.get("total_sign_day", 0))
             if day <= 0:
                 return ""
+            # is_sign=True: total_sign_day 含今天 → idx = day - 1
+            # is_sign=False: total_sign_day 不含今天 → idx = day（今天的奖励在下一个位置）
+            idx = day - 1 if data.get("is_sign") else day
             rewards = self._http.get(f"{base}{prefix}/home", headers=headers, params={"act_id": act_id, "lang": "zh-cn"})
             if rewards.code == 0 and isinstance(rewards.data, dict):
                 awards = rewards.data.get("awards") or []
-                if 0 < day <= len(awards):
-                    a = awards[day - 1]
+                if 0 <= idx < len(awards):
+                    a = awards[idx]
                     return f"「{a.get('name')}」x{a.get('cnt')}"
         except Exception:  # noqa: BLE001
             pass
