@@ -167,7 +167,12 @@ class PlatformBase(ABC):
 
     @abstractmethod
     def verify_credential(self) -> bool:
-        """校验凭证是否有效。"""
+        """校验凭证是否有效。
+
+        返回 False 表示未配置凭证（无事可做）；配置了凭证但校验失败时
+        应抛出 :class:`AuthExpiredError` 并尽量携带底层原因，供调用方
+        向用户展示，而不是静默吞掉。
+        """
 
     @abstractmethod
     def game_signin(self) -> list[CheckinResult]:

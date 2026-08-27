@@ -164,6 +164,17 @@ class GachaSignPlugin(Star):
             accounts.append(acc)
         return accounts, cred_store
 
+    def _fail_result(
+        self, platform: str, name: str, status: CheckinStatus, message: str,
+        display_platform: str = "",
+    ) -> CheckinResult:
+        """构造一条签到前就失败（平台不支持/凭证问题）的结果，保证失败可见。"""
+        return CheckinResult(
+            platform=platform, account=name, action="verify_credential",
+            status=status, message=message, game="凭证校验",
+            display_platform=display_platform,
+        )
+
     async def _do_signin(self) -> None:
         """执行签到（定时任务和手动命令共用）。"""
         accounts, _ = self._build_accounts()
@@ -178,14 +189,35 @@ class GachaSignPlugin(Star):
                 cls = get_platform_cls(acc.platform)
                 if cls is None:
                     logger.warning(f"[gacha_sign] 不支持的平台 {acc.platform}")
+                    results.append(self._fail_result(
+                        acc.platform, acc.name, CheckinStatus.FAILED,
+                        f"不支持的平台 {acc.platform}",
+                    ))
                     continue
                 platform = cls(acc, http, {})
                 try:
                     if not platform.verify_credential():
                         logger.warning(f"[gacha_sign] 凭证无效: {label}")
+                        results.append(self._fail_result(
+                            acc.platform, acc.name, CheckinStatus.AUTH_EXPIRED,
+                            "凭证无效，请重新登录或抓包更新凭证",
+                            cls.display_name,
+                        ))
                         continue
+                except AuthExpiredError as e:
+                    logger.warning(f"[gacha_sign] 凭证失效 {label}: {e}")
+                    results.append(self._fail_result(
+                        acc.platform, acc.name, CheckinStatus.AUTH_EXPIRED,
+                        str(e) or "凭证失效，请重新登录或抓包更新凭证",
+                        cls.display_name,
+                    ))
+                    continue
                 except Exception as e:
                     logger.warning(f"[gacha_sign] 凭证校验异常 {label}: {e}")
+                    results.append(self._fail_result(
+                        acc.platform, acc.name, CheckinStatus.FAILED,
+                        f"凭证校验异常: {e}", cls.display_name,
+                    ))
                     continue
                 logger.info(f"[gacha_sign] 签到中: {label}")
                 results.extend(platform.run_all())

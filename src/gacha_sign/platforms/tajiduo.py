@@ -157,21 +157,30 @@ class TajiduoPlatform(PlatformBase):
 
     # ---- 凭证校验 ----
     def verify_credential(self) -> bool:
+        """校验凭证。成功返回 True；配置了凭证但校验失败抛 AuthExpiredError
+        （携带底层原因，便于用户排查）；完全未配置凭证返回 False。
+        """
+        errors: list[str] = []
         # 有 refreshToken → 直接刷新验证
         if self.refresh_token:
             self._ensure_device_id()
             try:
                 self._refresh_access_token()
                 return True
-            except AuthExpiredError:
+            except AuthExpiredError as e:
                 self.refresh_token = ""  # 失效，尝试重新登录
+                errors.append(str(e))
         # 无 refreshToken 或已失效 → 尝试密码登录
         if self.phone and self.password:
             try:
                 self.login_by_password(self.phone, self.password)
                 return True
-            except Exception:  # noqa: BLE001
-                return False
+            except AuthExpiredError as e:
+                errors.append(str(e))
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"密码登录失败：{e}")
+        if errors:
+            raise AuthExpiredError("；".join(errors))
         return False
 
     # ---- 角色解析 ----
