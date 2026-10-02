@@ -38,16 +38,20 @@ TYPE = "16"
 SDKVERSION = "4.129.0"
 BID = "com.pwrd.htassistant"
 CHANNELID = "1"
-# usercenter 接口校验 appversion
-APPVERSION = "1.1.0"
+# usercenter 接口校验 appversion；ds 签名输入也包含该版本号，需与 appversion 头一致
+APPVERSION = "1.2.7"
+# bbs-api 签名头 ds 的 secret（Hermes 反汇编提取，261002 抓包验证）
+DS_SECRET = "pUds3dfMkl"
+REFERER = "https://app.tajiduo.com/"
 OKHTTP_UA = "okhttp/4.12.0"
 
 # 接口
 LAOHU_BASE = "https://user.laohu.com"
 TAJIDUO_BASE = "https://bbs-api.tajiduo.com"
 URL_PASSWORD_LOGIN = f"{LAOHU_BASE}/m/newApi/login"
-URL_USER_CENTER_LOGIN = f"{TAJIDUO_BASE}/usercenter/api/login"
-URL_REFRESH_TOKEN = f"{TAJIDUO_BASE}/usercenter/api/refreshToken"
+# 260828 起 login/refreshToken 旧接口返回 code=22，APP 1.2.7 已切换 V2
+URL_USER_CENTER_LOGIN = f"{TAJIDUO_BASE}/usercenter/api/loginV2"
+URL_REFRESH_TOKEN = f"{TAJIDUO_BASE}/usercenter/api/refreshTokenV2"
 URL_GET_GAME_ROLES = f"{TAJIDUO_BASE}/usercenter/api/v2/getGameRoles"
 URL_GAME_SIGNIN = f"{TAJIDUO_BASE}/apihub/awapi/sign"
 URL_GAME_SIGN_STATE = f"{TAJIDUO_BASE}/apihub/awapi/signin/state"
@@ -97,15 +101,25 @@ class TajiduoPlatform(PlatformBase):
             self.device_id = crypto.random_device_id()
             self.account.cred_set("device_id", self.device_id)
 
+    @staticmethod
+    def _ds() -> str:
+        """bbs-api 签名头：`{unix秒},,{md5(unix秒 + appversion + DS_SECRET)}`。"""
+        t = str(int(time.time()))
+        sign = crypto.md5_hex(t + APPVERSION + DS_SECRET)
+        return f"{t},,{sign}"
+
     def _native_headers(self, access_token: str = "") -> dict[str, str]:
-        """塔吉多原生鉴权请求头。"""
+        """塔吉多 bbs-api 通用请求头（APP 1.2.7 起：authorizationv2 + ds）。"""
         return {
+            "accept": "application/json, text/plain, */*",
             "platform": "android",
             "Content-Type": "application/x-www-form-urlencoded",
-            "authorization": access_token or self._access_token,
-            "uid": self.uid or "10000000",
+            "authorizationv2": access_token or self._access_token,
+            "uid": "0",
             "deviceid": self.device_id,
             "appversion": APPVERSION,
+            "referer": REFERER,
+            "ds": self._ds(),
             "User-Agent": OKHTTP_UA,
         }
 
@@ -125,15 +139,7 @@ class TajiduoPlatform(PlatformBase):
     def _refresh_access_token(self) -> str:
         """用 refreshToken 刷新 accessToken，并轮换持久化 refreshToken。"""
         self._ensure_device_id()
-        headers = {
-            "platform": "android",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "authorization": self.refresh_token,
-            "deviceid": self.device_id,
-            "appversion": APPVERSION,
-            "uid": "10000000",
-            "User-Agent": OKHTTP_UA,
-        }
+        headers = self._native_headers(access_token=self.refresh_token)
         resp = self._http.post_form(URL_REFRESH_TOKEN, headers=headers)
         if resp.status_code == 402:
             raise AuthExpiredError("refreshToken 已失效，请重新登录")
@@ -143,11 +149,11 @@ class TajiduoPlatform(PlatformBase):
         if not isinstance(data, dict):
             raise AuthExpiredError("刷新token返回缺少data")
         access_token = data.get("accessToken")
-        new_refresh = data.get("refreshToken")
-        if not access_token or not new_refresh:
-            raise AuthExpiredError("刷新token返回缺少 accessToken/refreshToken")
+        new_refresh = data.get("refreshToken") or ""
+        if not access_token:
+            raise AuthExpiredError("刷新token返回缺少 accessToken")
         self._access_token = access_token
-        # 轮换并持久化到 credentials.json
+        # 轮换并持久化到 credentials.json（可能为空：密码登录链路不发放 refreshToken）
         self.refresh_token = new_refresh
         self.account.cred_set("refresh_token", new_refresh)
         if data.get("uid"):
@@ -220,13 +226,8 @@ class TajiduoPlatform(PlatformBase):
         if not role_ids:
             return [self._fail("game_signin", "未找到异环角色")]
         candidates = self._candidate_game_ids()
-        headers = {
-            "platform": "android",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "authorization": self._access_token,
-            "appversion": APPVERSION,
-            "User-Agent": OKHTTP_UA,
-        }
+        # awapi 走 H5 层，鉴权头与原生不同：保留旧 authorization 头以兼容
+        headers = {**self._native_headers(), "authorization": self._access_token}
         results: list[CheckinResult] = []
         for role_id in role_ids:
             ok, msg, reward = self._sign_one_role(role_id, candidates, headers)
@@ -317,21 +318,20 @@ class TajiduoPlatform(PlatformBase):
         return crypto.md5_hex(values + SECRET)
 
     def _user_center_login(self, laohu_token: str, user_id: str) -> None:
-        """用 laohu token 换取塔吉多 accessToken/refreshToken 并持久化。"""
-        headers = {
-            "platform": "android", "Content-Type": "application/x-www-form-urlencoded",
-            "deviceid": self.device_id, "authorization": "", "appversion": APPVERSION,
-            "uid": "10000000", "User-Agent": OKHTTP_UA,
-        }
+        """用 laohu token 换取塔吉多 accessToken（loginV2）并持久化。
+
+        密码登录链路 refreshToken 返回空串：每次签到直接密码重登即可。
+        """
+        headers = self._native_headers(access_token="")
         data = {"token": laohu_token, "userIdentity": str(user_id), "appId": USER_CENTER_APP_ID}
         resp = self._http.post_form(URL_USER_CENTER_LOGIN, data=data, headers=headers)
         if not self._is_ok(resp):
             raise RuntimeError(f"用户中心登录失败：{resp.message or resp.text[:120]}")
         d = resp.raw_json.get("data") if isinstance(resp.raw_json, dict) else {}
         access_token = d.get("accessToken")
-        refresh_token = d.get("refreshToken")
-        if not access_token or not refresh_token:
-            raise RuntimeError("用户中心登录返回缺少 accessToken/refreshToken")
+        refresh_token = d.get("refreshToken") or ""
+        if not access_token:
+            raise RuntimeError("用户中心登录返回缺少 accessToken")
         self._access_token = access_token
         self.refresh_token = refresh_token
         self.account.cred_set("refresh_token", refresh_token)

@@ -1,26 +1,42 @@
 openapi: 3.1.0
 info:
   title: 塔吉多（异环 Neverness to Everness）签到与社区 API
-  version: "1.2.5"
+  version: "1.2.7"
   description: |
     塔吉多 APP（`com.pwrd.htassistant`）API。凭证为**手机号 + 密码**，自动登录。
 
-    # 登录链路
+    # 登录链路（261002 抓包更新，APP 1.2.7）
 
     1. `POST /m/newApi/login`（laohu SDK，`user.laohu.com`）→ `result.token` + `userId`
        - 字段需 **MD5 签名** `sign = md5(按 key 排序拼接的 value + SECRET)`
        - 明文失败（`BAD_REQUEST`）时改为 AES-128-ECB 加密 `username`/`password` 重试
-    2. `POST /usercenter/api/login`（`bbs-api.tajiduo.com`）→ `accessToken` + `refreshToken` + `uid`
-    3. `POST /usercenter/api/refreshToken` → 轮换取新的 `accessToken`/`refreshToken`
-       （`refreshToken` 每次刷新轮换，失效返回 HTTP 402）
+       - APP 1.2.7 实际使用 `POST /openApi/secureLogin`（AES 加密 + `robot-auth-type: 2`
+         头，sign 规则相同）；旧 `/m/newApi/login` 抓包时仍可用
+    2. `POST /usercenter/api/loginV2`（`bbs-api.tajiduo.com`）→ `accessToken` + `uid`
+       - 旧 `/usercenter/api/login` 已失效，返回 `code=22 invalid request`
+       - **密码登录链路 `refreshToken` 返回空串**（不发放），每次直接密码重登
+    3. `POST /usercenter/api/refreshTokenV2` → 轮换 `accessToken`/`refreshToken`
+       （旧 `/refreshToken` 同步废弃；`refreshToken` 失效返回 HTTP 402）
 
     # 请求头
 
-    业务接口统一头部：`platform: android`、`authorization: <accessToken>`、
-    `uid`、`deviceid`、`appversion: 1.1.0`、
+    bbs-api 业务接口统一头部（APP 1.2.7 实测）：`accept: application/json, text/plain, */*`、
+    `platform: android`、`authorizationv2: <accessToken>`（旧名 `authorization` 已改）、
+    `uid: 0`（**恒为 0**，登录态在 authorizationv2）、`deviceid`、`appversion: 1.2.7`、
+    `referer: https://app.tajiduo.com/`、**`ds` 签名头**、
     `Content-Type: application/x-www-form-urlencoded`、`User-Agent: okhttp/4.12.0`。
 
-    > `appversion` 对 usercenter 接口校验严格，当前可用值为 `1.1.0`。
+    ## ds 签名头（服务端强校验）
+
+    ```
+    ds: {unix秒},,{md5(str(unix秒) + appversion + DS_SECRET)}
+    ```
+
+    - `DS_SECRET` = `pUds3dfMkl`（Hermes 反汇编提取，抓包 + 实时请求双验证）
+    - 中间 nonce 位恒为空；假 hash 或 t 与 hash 不匹配均返回 `code=22`
+    - awapi 游戏签到走 H5 WebView 层，无 `ds` 头，鉴权方式不同
+
+    > `appversion` 对 usercenter 接口校验严格，当前可用值为 `1.2.7`（ds 输入同步变更）。
 
     # 响应封套
 
@@ -36,6 +52,7 @@ info:
     - 异环社区 `communityId` = `2`
     - laohu SDK `appId` = `10550`；用户中心 `appId` = `10551`
     - laohu 签名 `SECRET` = `89155cc4e8634ec5b1b6364013b23e3e`（同时为 AES key 源）
+    - bbs-api `ds` 签名 `DS_SECRET` = `pUds3dfMkl`
 
     > 响应 schema 基于真实抓包（`scripts/probe_api.py`）。
 servers:
@@ -58,8 +75,8 @@ components:
     TajiduoAuth:
       type: apiKey
       in: header
-      name: authorization
-      description: accessToken（业务接口）或 refreshToken（刷新接口）。
+      name: authorizationv2
+      description: accessToken（业务接口）或 refreshToken（刷新接口）。261002 起旧名 authorization 改为 authorizationv2；uid 头恒为 0。
   schemas:
     Envelope:
       type: object
@@ -168,10 +185,14 @@ paths:
                       token: { type: string }
                       userId: { type: integer }
 
-  /usercenter/api/login:
+  /usercenter/api/loginV2:
     post:
       tags: [auth]
-      summary: 用 laohu token 换取 accessToken / refreshToken
+      summary: 用 laohu token 换取 accessToken（loginV2）
+      description: |
+        261002 起 APP 1.2.7 改用 loginV2，旧 `/usercenter/api/login` 返回 code=22。
+        需带 `ds` 签名头与 `referer` 头，`authorizationv2` 置空、`uid: 0`。
+        密码登录链路 `refreshToken` 返回**空串**（不发放）。
       servers: [{ url: https://bbs-api.tajiduo.com }]
       requestBody:
         required: true
@@ -186,7 +207,7 @@ paths:
                 appId: { type: string, example: "10551" }
       responses:
         "200":
-          description: 返回 accessToken/refreshToken/uid
+          description: 返回 accessToken/uid（refreshToken 为空串）
           content:
             application/json:
               schema:
@@ -197,14 +218,15 @@ paths:
                         type: object
                         properties:
                           accessToken: { type: string }
-                          refreshToken: { type: string }
+                          refreshToken: { type: string, description: 密码登录为空串 }
                           uid: { type: integer }
+                          firstLogin: { type: boolean }
 
-  /usercenter/api/refreshToken:
+  /usercenter/api/refreshTokenV2:
     post:
       tags: [auth]
-      summary: 刷新 accessToken（refreshToken 轮换）
-      description: "`authorization` 头传当前 refreshToken；HTTP 402 表示已失效需重新登录。"
+      summary: 刷新 accessToken（refreshToken 轮换，V2）
+      description: "`authorizationv2` 头传当前 refreshToken；HTTP 402 表示已失效需重新登录。旧 `/refreshToken` 已废弃。"
       servers: [{ url: https://bbs-api.tajiduo.com }]
       security: [{ TajiduoAuth: [] }]
       responses:
