@@ -27,6 +27,13 @@ _src_dir = os.path.join(os.path.dirname(__file__), "src")
 if os.path.isdir(_src_dir) and _src_dir not in sys.path:
     sys.path.insert(0, _src_dir)
 
+# AstrBot 重载插件时只清理 data.plugins.* 前缀的模块；gacha_sign 包是
+# 通过 sys.path 顶层导入的，会残留在 sys.modules 中，导致插件更新后
+# 进程内仍执行旧代码（261003 事故：tajiduo 登录修复更新后不生效）。
+# 导入前强制清除，保证每次加载/重载都从磁盘重新导入。
+for _mod in [m for m in sys.modules if m == "gacha_sign" or m.startswith("gacha_sign.")]:
+    del sys.modules[_mod]
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
