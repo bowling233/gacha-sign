@@ -3,6 +3,7 @@
 集中放置各平台复用的签名、加密、设备ID 生成函数：
 - :func:`md5_hex`          —— MD5 摘要（塔吉多请求签名）
 - :func:`aes_ecb_base64`   —— AES-128-ECB/PKCS7 加密（塔吉多登录字段加密）
+- :func:`rsa_pkcs1_base64` —— RSA PKCS#1 v1.5 公钥加密（米游社账密登录）
 - :func:`des_ecb_nullpad`  —— DES-ECB 空字节填充加密（森空岛数美指纹）
 - :func:`random_device_id` —— 生成随机设备标识
 """
@@ -39,6 +40,21 @@ def aes_ecb_base64(plaintext: str, secret: str) -> str:
 def random_device_id() -> str:
     """生成随机设备 ID（32 位 hex，无连字符）。"""
     return uuid.uuid4().hex
+
+
+def rsa_pkcs1_base64(plaintext: str, public_key_b64: str) -> str:
+    """RSA 公钥加密（PKCS#1 v1.5 填充），返回 base64 字符串。
+
+    ``public_key_b64`` 为 X.509 SPKI DER 的 base64（可含换行），
+    与米游社账号 SDK ``RSAUtils.encryptByPublicKey`` 一致。
+    """
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    key_bytes = base64.b64decode("".join(public_key_b64.split()))
+    key = serialization.load_der_public_key(key_bytes)
+    encrypted = key.encrypt(plaintext.encode("utf-8"), padding.PKCS1v15())
+    return base64.b64encode(encrypted).decode("utf-8")
 
 
 def des_ecb_nullpad(key: bytes, data: bytes) -> bytes:

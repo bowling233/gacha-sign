@@ -171,6 +171,16 @@ class HttpClient:
         """以 application/json 提交。"""
         return self._request_with_retry("POST", url, json=json_body, **kwargs)
 
+    def post_content(self, url: str, content: str | bytes, **kwargs: Any) -> ApiResponse:
+        """提交原始请求体（字节精确）。
+
+        用于 DS 等签名必须覆盖**确切 body 字节**的场景：调用方自行序列化，
+        避免 ``json=`` 由 httpx 重新序列化导致签名不一致。
+        """
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        return self._request_with_retry("POST", url, content=content, **kwargs)
+
     def close(self) -> None:
         self._client.close()
 

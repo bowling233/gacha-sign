@@ -7,7 +7,17 @@ debug: false
 accounts:
   - name: "米游社主号"
     platform: mihoyo
+    games: ["zzz", "genshin"]
+    # 凭证二选一：手动抓包 cookie + stoken，或配置账密自动登录
     cookie: ""             # APP 抓包获取（含 cookie_token_v2 等 v2 字段）
+    stoken: ""             # 社区接口必需（v2_ 开头）
+    phone: ""              # 手机号（配置后凭证过期可自动重新登录并刷新 cookie）
+    password: ""           # 密码
+    # 设备标识（可选，强烈建议固定复用以降低风控验证码概率）：
+    # 从抓包请求头 x-rpc-device_id / x-rpc-device_fp 获取；不填则首次生成
+    # 并持久化到 credentials.json
+    device_id: ""
+    device_fp: ""
 
   - name: "鸣潮主号"
     platform: kuro

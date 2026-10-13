@@ -59,6 +59,8 @@ servers:
     description: 绝区零 luna 签到
   - url: https://bbs-api.miyoushe.com
     description: 社区接口（签到 / 任务 / 帖子）
+  - url: https://passport-api.mihoyo.com
+    description: passport 账号 SDK（账密登录、token 交换）
 tags:
   - name: auth
     description: 角色查询（凭证校验）
@@ -145,6 +147,98 @@ components:
       additionalProperties: true
 
 paths:
+  /account/ma-cn-passport/app/loginByPassword:
+    post:
+      tags: [auth]
+      summary: 手机号+密码登录（APP 账号 SDK，返回 stoken v2）
+      servers:
+        - url: https://passport-api.mihoyo.com
+      description: |
+        账密登录。`account` / `password` 均为 RSA-1024 PKCS#1 v1.5 加密后 base64
+        （公钥硬编码于 APP `RSAUtils`，X.509 SPKI base64）。
+
+        请求头（与社区接口不同的一套）：
+        `DS`（**passport 专用 salt** `JwYDpKvLj6MrMqqYU6jTKF17KNO2PXoS`，
+        DS2 公式，`b=` 为确切 JSON body 字节）、
+        `x-rpc-app_id: bll8iq97cem8`、`x-rpc-client_type: 2`、
+        `x-rpc-device_id`、`x-rpc-device_fp`（设备指纹，**固定复用可降低风控触发**）、
+        `x-rpc-device_name`、`x-rpc-game_biz: bbs_cn`、
+        `x-rpc-app_version: 2.116.0`、`x-rpc-aigis`（极验结果，短信路径为空）。
+
+        响应码：
+        - `0`：`data.token` 为 **token_type=1 即 stoken v2**（TokenType 位标志：
+          1=STOKEN / 2=LTOKEN / 4=COOKIE_TOKEN / 8=LOGIN_TICKET），
+          `data.user_info` 含 `aid` / `mid`
+        - `-3235`：触发风控验证（短信/滑块），action_ticket 在响应头
+          `X-Rpc-Verify`（JSON）中，需人工完成，无法脚本化
+        - `-3208`：账号或密码错误
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [account, password]
+              properties:
+                account: { type: string, description: RSA 加密后的手机号 }
+                password: { type: string, description: RSA 加密后的密码 }
+      responses:
+        "200":
+          description: 登录结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      data:
+                        type: object
+                        properties:
+                          token:
+                            type: object
+                            properties:
+                              token: { type: string, example: "v2_..." }
+                              token_type: { type: integer, example: 1 }
+                          user_info:
+                            type: object
+                            properties:
+                              aid: { type: string, example: "372398359" }
+                              mid: { type: string, example: "0ov6bah814_mhy" }
+
+  /account/ma-cn-session/app/exchange:
+    post:
+      tags: [auth]
+      summary: token 交换（stoken → ltoken / cookie_token）
+      servers:
+        - url: https://passport-api.mihoyo.com
+      description: |
+        用 stoken（token_type=1）换取其它 token：
+        `dst_token_type=2` → ltoken v2（cookie 的 `ltoken_v2`），
+        `dst_token_type=4` → cookie_token（cookie 的 `cookie_token_v2` /
+        `cookie_token`）。请求头与签名同 loginByPassword。
+
+        换取后组装 cookie：
+        `account_id={aid};cookie_token_v2={t4};ltoken_v2={t2};cookie_token={t4};
+        account_mid_v2={mid};ltuid={aid}`。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [src_token, mid, dst_token_type]
+              properties:
+                src_token:
+                  type: object
+                  properties:
+                    token: { type: string }
+                    token_type: { type: integer, example: 1 }
+                mid: { type: string }
+                dst_token_type: { type: integer, enum: [2, 4] }
+      responses:
+        "200":
+          description: 交换结果（结构与 loginByPassword 成功响应一致）
+
   /binding/api/getUserGameRolesByCookie:
     get:
       tags: [auth, game_checkin]

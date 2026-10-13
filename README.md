@@ -9,7 +9,7 @@
 
 | 社区 APP | 平台代号 | 支持游戏 | 凭证方式 |
 | --- | --- | --- | --- |
-| 米游社 | `mihoyo` | 绝区零、原神 | APP 抓包 cookie + stoken |
+| 米游社 | `mihoyo` | 绝区零、原神 | 手机号 + 密码 / APP 抓包 cookie + stoken |
 | 库街区 | `kuro` | 鸣潮 | APP 抓包 token / 网页登录 token |
 | 塔吉多 | `tajiduo` | 异环 | 手机号 + 密码 |
 | 森空岛 | `skland` | 明日方舟、终末地 | 手机号 + 密码 |
@@ -58,7 +58,26 @@
     token: "eyJ..."          # 网页登录 localStorage 或 APP 抓包获取
   ```
 
-- 米游社（绝区零/原神）：米游社 APP 抓包获取 cookie（含 `cookie_token_v2` 等 v2 字段）和 stoken：
+- 米游社（绝区零/原神）凭证二选一：
+
+  **方式一（推荐）：手机号 + 密码自动登录。** 程序通过 passport 账号 SDK 自动登录并
+  管理全套 token（stoken / cookie_token / ltoken），凭证过期自动重新登录：
+
+  ```yaml
+  - name: "账号名称"
+    platform: mihoyo
+    games: ["zzz", "genshin"]
+    phone: "手机号"
+    password: "密码"
+    device_id: "dfa59..."    # 可选，抓包 x-rpc-device_id；固定复用可降低风控触发
+    device_fp: "38d8..."     # 可选，抓包 x-rpc-device_fp；不填则自动生成并持久化
+  ```
+
+  > 注意：登录可能触发米哈游风控（短信验证码/滑块），脚本无法自动完成。此时请在
+  > 米游社 APP 手动登录一次后重试。固定复用 `device_id` + `device_fp` 可显著降低
+  > 触发概率。
+
+  **方式二：APP 抓包 cookie + stoken：**
 
   ```yaml
   - name: "账号名称"
